@@ -64,6 +64,7 @@ def _retry(retry, backoff_factor, backoff_max, func):
                             min(backoff_max, backoff_factor * (2 ** (_retry_count - 1)))
                         )
                         time.sleep(_backoff_time)
+
         except _ExceptionWrapper as e:
             # currently all exceptions lead to OtaErrorRecoverable
             _inner_e = e.__cause__
