@@ -1,12 +1,17 @@
 import os
 import re
-import shlex
 import shutil
 import subprocess
 from pathlib import Path
 from functools import partial
 
 import log_util
+from _common import (
+    subprocess_call,
+    subprocess_check_output,
+    read_from_file,
+    write_to_file,
+)
 from configs import config as cfg
 from ota_error import OtaErrorRecoverable, OtaErrorUnrecoverable
 from ota_status import OtaStatus
@@ -19,42 +24,6 @@ logger = log_util.get_logger(
 )
 
 
-def _read_file(path: Path) -> str:
-    try:
-        return path.read_text().strip()
-    except Exception:
-        return ""
-
-
-def _write_file(path: Path, input: str):
-    path.write_text(input)
-
-
-def _subprocess_call(cmd: str, *, raise_exception=False):
-    try:
-        logger.debug(f"cmd: {cmd}")
-        subprocess.check_call(shlex.split(cmd), stdout=subprocess.DEVNULL)
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            msg=f"command failed(exit-code: {e.returncode} stderr: {e.stderr} stdout: {e.stdout}): {cmd}"
-        )
-        if raise_exception:
-            raise
-
-
-def _subprocess_check_output(cmd: str, *, raise_exception=False) -> str:
-    try:
-        logger.debug(f"cmd: {cmd}")
-        return subprocess.check_output(shlex.split(cmd)).decode().strip()
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            msg=f"command failed(exit-code: {e.returncode} stderr: {e.stderr} stdout: {e.stdout}): {cmd}"
-        )
-        if raise_exception:
-            raise
-        return ""
-
-
 class HelperFuncs:
     @staticmethod
     def _findfs(key: str, value: str) -> str:
@@ -64,22 +33,22 @@ class HelperFuncs:
             findfs [options] {LABEL,UUID,PARTUUID,PARTLABEL}=<value>
         """
         _cmd = f"findfs {key}={value}"
-        return _subprocess_check_output(_cmd)
+        return subprocess_check_output(_cmd)
 
     @staticmethod
     def _findmnt(p: str) -> str:
         _cmd = f"findmnt {p}"
-        return _subprocess_check_output(_cmd)
+        return subprocess_check_output(_cmd)
 
     @staticmethod
     def _lsblk(args: str) -> str:
         _cmd = f"lsblk {args}"
-        return _subprocess_check_output(_cmd)
+        return subprocess_check_output(_cmd)
 
     @staticmethod
     def _blkid(args: str) -> str:
         _cmd = f"blkid {args}"
-        return _subprocess_check_output(_cmd)
+        return subprocess_check_output(_cmd)
 
     @classmethod
     def get_partuuid_by_dev(cls, dev: str) -> str:
@@ -161,9 +130,9 @@ class Nvbootctrl:
         # NOTE: target is always set to rootfs
         _cmd = f"nvbootctrl -t rootfs {arg}"
         if call_only:
-            _subprocess_call(_cmd, raise_exception=raise_exception)
+            subprocess_call(_cmd, raise_exception=raise_exception)
         else:
-            return _subprocess_check_output(
+            return subprocess_check_output(
                 _cmd, raise_exception=raise_exception
             ).strip()
 
@@ -175,7 +144,7 @@ class Nvbootctrl:
         NOTE: expect using UUID method to assign rootfs!
         """
         pa = re.compile(r"\broot=(?P<rdev>[\w=-]*)\b")
-        ma = pa.search(_subprocess_check_output("cat /proc/cmdline")).group("rdev")
+        ma = pa.search(subprocess_check_output("cat /proc/cmdline")).group("rdev")
 
         if ma is None:
             raise OtaErrorUnrecoverable("rootfs detect failed or not PARTUUID method")
@@ -228,7 +197,7 @@ class CBootControl:
         # NOTE: only support r580 platform right now!
         # detect the chip id
         tegra_chip_id_f = Path("/sys/module/tegra_fuse/parameters/tegra_chip_id")
-        self.chip_id = _read_file(tegra_chip_id_f).strip()
+        self.chip_id = read_from_file(tegra_chip_id_f).strip()
         if self.chip_id is None or int(self.chip_id) not in cfg.CHIP_ID_MODEL_MAP:
             raise NotImplementedError(
                 f"unsupported platform found (chip_id: {self.chip_id}), abort"
@@ -334,7 +303,7 @@ class CBootControl:
 
     @classmethod
     def reboot(cls):
-        subprocess.check_call(shlex.split("reboot"))
+        subprocess_call("reboot")
 
     def update_extlinux_cfg(self, dst: Path, src: Path):
         def _replace(ma: re.Match, repl: str):
@@ -380,14 +349,14 @@ class CBootControlMixin(BootControlInterface):
     def _mount_standby(self):
         self._mount_point.mkdir(parents=True, exist_ok=True)
         # try unmount mount point first
-        _subprocess_call(f"umount {self._mount_point}")
+        subprocess_call(f"umount {self._mount_point}")
 
         standby_rootfs_dev = self._boot_control.get_standby_rootfs_dev()
         cmd_mount = f"mount {standby_rootfs_dev} {self._mount_point}"
         logger.debug(
             f"mount rootfs partition: target={standby_rootfs_dev},mount_point={self._mount_point}"
         )
-        _subprocess_call(cmd_mount, raise_exception=True)
+        subprocess_call(cmd_mount, raise_exception=True)
         # create new ota_status_dir on standby dev
         self._standby_ota_status_dir.mkdir(parents=True, exist_ok=True)
 
@@ -396,14 +365,14 @@ class CBootControlMixin(BootControlInterface):
         if self._boot_control.is_external_rootfs_enabled():
             standby_boot_dev = self._boot_control.get_standby_boot_dev()
             # try unmount mount point first
-            _subprocess_call(f"umount {self._standby_boot_mount_point}")
+            subprocess_call(f"umount {self._standby_boot_mount_point}")
 
             self._standby_boot_mount_point.mkdir(parents=True, exist_ok=True)
             cmd_mount = f"mount {standby_boot_dev} {self._standby_boot_mount_point}"
             logger.debug(
                 f"mount boot partition: target:={standby_boot_dev},mount_point={self._standby_boot_mount_point}"
             )
-            _subprocess_call(cmd_mount, raise_exception=True)
+            subprocess_call(cmd_mount, raise_exception=True)
 
     def _cleanup_standby_rootfs_parititon(self):
         """
@@ -414,7 +383,7 @@ class CBootControlMixin(BootControlInterface):
 
         # first try umount the dev
         try:
-            _subprocess_call(f"umount -f {standby_dev}", raise_exception=True)
+            subprocess_call(f"umount -f {standby_dev}", raise_exception=True)
         except subprocess.CalledProcessError as e:
             # suppress target not mounted error
             if e.returncode != 32:
@@ -423,7 +392,7 @@ class CBootControlMixin(BootControlInterface):
 
         # format the standby slot
         try:
-            _subprocess_call(f"mkfs.ext4 -F {standby_dev}", raise_exception=True)
+            subprocess_call(f"mkfs.ext4 -F {standby_dev}", raise_exception=True)
         except subprocess.CalledProcessError:
             logger.error(f"failed to cleanup standby bank {standby_dev}")
             raise
@@ -463,7 +432,7 @@ class CBootControlMixin(BootControlInterface):
         # copy the /boot folder from standby slot to boot dev unconditionally
         _cmd = f"cp -rdpT {src_dir} {dst_dir}"
         try:
-            _subprocess_call(_cmd, raise_exception=True)
+            subprocess_call(_cmd, raise_exception=True)
         except Exception as e:
             raise OtaErrorRecoverable(
                 f"failed to update /boot on standby bootdev: {e!r}"
@@ -482,19 +451,19 @@ class CBootControlMixin(BootControlInterface):
         Note: only init current slot if needed
         """
         slot = self._boot_control.get_current_slot()
-        _write_file(self._slot_in_use_file, slot)
+        write_to_file(self._slot_in_use_file, slot)
 
     def load_slot_in_use_file(self):
         """
         Note: only load current slot if needed
         """
-        return _read_file(self._slot_in_use_file)
+        return read_from_file(self._slot_in_use_file)
 
     def store_slot_in_use_file(self, slot_in_use: str, target: Path):
-        _write_file(target, slot_in_use)
+        write_to_file(target, slot_in_use)
 
     def load_ota_status(self) -> str:
-        return _read_file(self._ota_status_file)
+        return read_from_file(self._ota_status_file)
 
     def initialize_ota_status(self) -> OtaStatus:
         self._ota_status_dir.mkdir(parents=True, exist_ok=True)
@@ -526,13 +495,13 @@ class CBootControlMixin(BootControlInterface):
                 return OtaStatus[status]
 
     def store_standby_ota_status(self, status: OtaStatus):
-        _write_file(self._standby_ota_status_file, status.name)
+        write_to_file(self._standby_ota_status_file, status.name)
 
     def store_standby_ota_version(self, version: str):
-        _write_file(self._standby_ota_version_file, version)
+        write_to_file(self._standby_ota_version_file, version)
 
     def store_ota_status(self, status: OtaStatus):
-        _write_file(self._ota_status_file, status.name)
+        write_to_file(self._ota_status_file, status.name)
 
     def store_initialized_ota_status(self):
         self.store_ota_status(OtaStatus.INITIALIZED)
@@ -545,7 +514,7 @@ class CBootControlMixin(BootControlInterface):
         return self._mount_point / "boot"
 
     def get_version(self) -> str:
-        return _read_file(self._ota_version_file)
+        return read_from_file(self._ota_version_file)
 
     def boot_ctrl_pre_update(self, version):
         logger.debug("entering pre-update...")
