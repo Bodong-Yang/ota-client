@@ -1,108 +1,29 @@
 import os
-from typing import NamedTuple, Type
-from urllib.parse import urljoin
 import pytest
 import json
 import shutil
-from pytest_mock import MockerFixture
 import requests
 import requests_mock
+from urllib.parse import urljoin
+from pytest_mock import MockerFixture
 from pathlib import Path
 from threading import Thread
 
-from app.create_bank import LegacyMode
-from app.configs import GrubControlConfig
-from app.proxy_info import ProxyInfo
-import ota_client
-
-test_dir = Path(__file__).parent
-
-grub_cfg_wo_submenu = open(test_dir / "grub.cfg.wo_submenu").read()
-custom_cfg = open(test_dir / "custom.cfg").read()
-
-URL_BASE = "http://ota-server:8080/ota-server/"
-
-
-FSTAB_DEV_DISK_BY_UUID = """\
-# /etc/fstab: static file system information.
-#
-# Use 'blkid' to print the universally unique identifier for a
-# device; this may be used with UUID= as a more robust way to name devices
-# that works even if disks are added and removed. See fstab(5).
-#
-# <file system> <mount point>   <type>  <options>       <dump>  <pass>
-# / was on /dev/sda3 during curtin installation
-/dev/disk/by-uuid/01234567-0123-0123-0123-0123456789ab / ext4 defaults 0 0
-# /boot was on /dev/sda2 during curtin installation
-/dev/disk/by-uuid/cc59073d-9e5b-41e1-b724-576259341132 /boot ext4 defaults 0 0
-/swap.img	none	swap	sw	0	0
-"""
-
-FSTAB_DEV_DISK_BY_UUID_STANDBY = """\
-# /etc/fstab: static file system information.
-#
-# Use 'blkid' to print the universally unique identifier for a
-# device; this may be used with UUID= as a more robust way to name devices
-# that works even if disks are added and removed. See fstab(5).
-#
-# <file system> <mount point>   <type>  <options>       <dump>  <pass>
-# / was on /dev/sda3 during curtin installation
-/dev/disk/by-uuid/76543210-3210-3210-3210-ba9876543210 / ext4 defaults 0 0
-# /boot was on /dev/sda2 during curtin installation
-/dev/disk/by-uuid/cc59073d-9e5b-41e1-b724-576259341132 /boot ext4 defaults 0 0
-/swap.img	none	swap	sw	0	0
-"""
-
-DEFAULT_GRUB = """\
-# If you change this file, run 'update-grub' afterwards to update
-# /boot/grub/grub.cfg.
-# For full documentation of the options in this file, see:
-#   info -f grub -n 'Simple configuration'
-
-GRUB_DEFAULT=0
-GRUB_TIMEOUT_STYLE=hidden
-GRUB_TIMEOUT=10
-GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
-GRUB_CMDLINE_LINUX=""
-
-# Uncomment to enable BadRAM filtering, modify to suit your needs
-# This works with Linux (no patch required) and with any kernel that obtains
-# the memory map information from GRUB (GNU Mach, kernel of FreeBSD ...)
-#GRUB_BADRAM="0x01234567,0xfefefefe,0x89abcdef,0xefefefef"
-
-# Uncomment to disable graphical terminal (grub-pc only)
-#GRUB_TERMINAL=console
-
-# The resolution used on graphical terminal
-# note that you can use only modes which your graphic card supports via VBE
-# you can see them in real GRUB with the command `vbeinfo'
-#GRUB_GFXMODE=640x480
-
-# Uncomment if you don't want GRUB to pass "root=UUID=xxx" parameter to Linux
-#GRUB_DISABLE_LINUX_UUID=true
-
-# Uncomment to disable generation of recovery mode menu entries
-#GRUB_DISABLE_RECOVERY="true"
-
-# Uncomment to get a beep at grub start
-#GRUB_INIT_TUNE="480 440 1"\
-"""
-
-# not enable proxy when doing test
-DEFUALT_PROXY_INFO = """
-enable_local_ota_proxy: false
-"""
-
-
-class MockedCfgBundle(NamedTuple):
-    cfg: GrubControlConfig
-    proxy_info: ProxyInfo
+from tests.conftest import (
+    CUSTOM_CFG,
+    DEFAULT_GRUB,
+    DEFUALT_PROXY_INFO,
+    FSTAB_DEV_DISK_BY_UUID_STANDBY,
+    FSTAB_DEV_DISK_BY_UUID,
+    GRUB_CFG_WO_SUBMENU,
+    MockedCfgBundle,
+    URL_BASE,
+)
 
 
 @pytest.fixture
-def mocked_cfgs(tmp_path: Path):
-    """Prepared configs bundle for testing.
+def setup_test(tmp_path: Path):
+    """Prepare test environment and return the corresponding configs bundle for testing.
 
     Configuration:
         1. partitions:
@@ -165,7 +86,7 @@ def mocked_cfgs(tmp_path: Path):
     grub_dir.mkdir()
     grub_cfg = grub_dir / "grub.cfg"
     grub_cfg.symlink_to(Path("..") / "ota-partition" / "grub.cfg")
-    grub_cfg.write_text(grub_cfg_wo_submenu)
+    grub_cfg.write_text(GRUB_CFG_WO_SUBMENU)
 
     # etc
     etc_dir = tmp_path / "etc"
@@ -210,17 +131,17 @@ def mocked_cfgs(tmp_path: Path):
 
 @pytest.fixture
 def mocked_ota_client_mod(
-    mocked_cfgs: MockedCfgBundle, mocker: MockerFixture, tmp_path: Path
+    setup_test: MockedCfgBundle, mocker: MockerFixture, tmp_path: Path
 ):
-    """Mocked ota_client module that configured by mocked_cfgs."""
+    """Mocked ota_client module that configured by setup_test."""
 
     import ota_client
     from grub_ota_partition import OtaPartition, OtaPartitionFile
     from grub_control import GrubControl
     import app.create_bank._legacy_mode as legacy_mode
 
-    # dirs
-    _cfg, _proxy_info = mocked_cfgs
+    ###### load cfgs ######
+    _cfg, _proxy_info = setup_test
     boot_dir = Path(_cfg.BOOT_DIR)
     etc_dir = tmp_path / "etc"
 
@@ -266,12 +187,12 @@ def mocked_ota_client_mod(
 
     def mock__grub_mkconfig_cmd(_, outfile):
         # TODO: depend on the outfile, grub.cfg with vmlinuz-ota entry should be output.
-        outfile.write_text(grub_cfg_wo_submenu)
+        outfile.write_text(GRUB_CFG_WO_SUBMENU)
 
     mocker.patch.object(GrubControl, "_grub_mkconfig_cmd", mock__grub_mkconfig_cmd)
 
     ###### load configs ######
-    mocker.patch.object(legacy_mode, "proxy_cfg", mocked_cfgs.proxy_info)
+    mocker.patch.object(legacy_mode, "proxy_cfg", setup_test.proxy_info)
     mocker.patch.object(ota_client, "proxy_cfg", _proxy_info)
     mocker.patch.object(ota_client, "cfg", _cfg)
 
@@ -280,14 +201,14 @@ def mocked_ota_client_mod(
 
 def test_ota_client_update(
     mocked_ota_client_mod,
-    mocked_cfgs: MockedCfgBundle,
+    setup_test: MockedCfgBundle,
     tmp_path: Path,
 ):
     from ota_client import OtaClientFailureType, OtaStateSync
     from ota_status import OtaStatus
 
     ####### preload cfgs ######
-    _cfg, _ = mocked_cfgs
+    _cfg, _ = setup_test
     boot_dir = Path(_cfg.BOOT_DIR)
 
     ###### test settings ######
@@ -377,9 +298,9 @@ def test_ota_client_update(
 
     # custom.cfg is created
     assert (boot_dir / "grub" / "custom.cfg").is_file()
-    assert open(boot_dir / "grub" / "custom.cfg").read() == custom_cfg
+    assert open(boot_dir / "grub" / "custom.cfg").read() == CUSTOM_CFG
 
-    # number of menuentry in grub_cfg_wo_submenu is 9
+    # number of menuentry in GRUB_CFG_WO_SUBMENU is 9
     ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_called_once_with(
         9
     )
@@ -521,7 +442,7 @@ def test_ota_client_update_multiple_call(mocked_ota_client_mod):
 )
 def test_ota_client_update_regular_download_error(
     mocked_ota_client_mod,
-    mocked_cfgs: MockedCfgBundle,
+    setup_test: MockedCfgBundle,
     error_injection,
     failure_reason_has,
 ):
@@ -529,7 +450,7 @@ def test_ota_client_update_regular_download_error(
     from ota_status import OtaStatus
 
     # preload
-    _cfg, _ = mocked_cfgs
+    _cfg, _ = setup_test
     boot_dir = Path(_cfg.BOOT_DIR)
 
     ###### test settings ######
@@ -598,7 +519,7 @@ def test_ota_client_update_regular_download_error(
 
 def test_ota_client_update_with_initialize_boot_partition(
     mocked_ota_client_mod,
-    mocked_cfgs: MockedCfgBundle,
+    setup_test: MockedCfgBundle,
     mocker: MockerFixture,
     tmp_path: Path,
 ):
@@ -607,7 +528,7 @@ def test_ota_client_update_with_initialize_boot_partition(
     from grub_control import GrubControl
 
     ###### preload cfgs ######
-    _cfg, _ = mocked_cfgs
+    _cfg, _ = setup_test
     boot_dir = Path(_cfg.BOOT_DIR)
     grub_cfg = str(_cfg.GRUB_CFG_FILE)
 
@@ -616,8 +537,8 @@ def test_ota_client_update_with_initialize_boot_partition(
 
     def mock__grub_mkconfig_cmd(_, outfile):
         # TODO: depend on the outfile, grub.cfg with vmlinuz-ota entry should be output.
-        # to make the data different from grub_cfg_wo_submenu
-        outfile.write_text(grub_cfg_wo_submenu + grub_cfg_salt)
+        # to make the data different from GRUB_CFG_WO_SUBMENU
+        outfile.write_text(GRUB_CFG_WO_SUBMENU + grub_cfg_salt)
 
     # re-patch again
     mocker.patch.object(GrubControl, "_grub_mkconfig_cmd", mock__grub_mkconfig_cmd)
@@ -649,11 +570,11 @@ def test_ota_client_update_with_initialize_boot_partition(
     # grub.cfg is generated under ota-partition
     assert (
         open(boot_dir / "ota-partition" / "grub.cfg").read()
-        == grub_cfg_wo_submenu + grub_cfg_salt
+        == GRUB_CFG_WO_SUBMENU + grub_cfg_salt
     )
     assert (
         open(boot_dir / "ota-partition.sdx3" / "grub.cfg").read()
-        == grub_cfg_wo_submenu + grub_cfg_salt
+        == GRUB_CFG_WO_SUBMENU + grub_cfg_salt
     )
 
     # start the update in another thread
@@ -698,9 +619,9 @@ def test_ota_client_update_with_initialize_boot_partition(
 
     # custom.cfg is created
     assert (boot_dir / "grub" / "custom.cfg").is_file()
-    assert open(boot_dir / "grub" / "custom.cfg").read() == custom_cfg
+    assert open(boot_dir / "grub" / "custom.cfg").read() == CUSTOM_CFG
 
-    # number of menuentry in grub_cfg_wo_submenu is 9
+    # number of menuentry in GRUB_CFG_WO_SUBMENU is 9
     ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_called_once_with(
         9
     )
@@ -716,14 +637,14 @@ def test_ota_client_update_with_initialize_boot_partition(
 
 def test_ota_client_update_post_process(
     mocked_ota_client_mod,
-    mocked_cfgs: MockedCfgBundle,
+    setup_test: MockedCfgBundle,
     mocker: MockerFixture,
 ):
     from grub_ota_partition import OtaPartition
     from ota_status import OtaStatus
 
     ####### preload cfgs ######
-    _cfg, _ = mocked_cfgs
+    _cfg, _ = setup_test
     boot_dir = Path(_cfg.BOOT_DIR)
 
     ###### extra patching #######
@@ -745,8 +666,8 @@ def test_ota_client_update_post_process(
     assert open(boot_dir / "ota-partition.sdx3" / "status").read() == "SUCCESS"
     assert ota_client_instance.get_ota_status() == OtaStatus.SUCCESS
 
-    assert (  # NOTE: mock__grub_mkconfig_cmd returns grub_cfg_wo_submenu
-        open(boot_dir / "ota-partition.sdx4" / "grub.cfg").read() == grub_cfg_wo_submenu
+    assert (  # NOTE: mock__grub_mkconfig_cmd returns GRUB_CFG_WO_SUBMENU
+        open(boot_dir / "ota-partition.sdx4" / "grub.cfg").read() == GRUB_CFG_WO_SUBMENU
     )
 
     ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_not_called()
@@ -767,11 +688,11 @@ PERSISTENTS_TXT = """\
 
 def test_ota_client__copy_persistent_files(
     mocked_ota_client_mod,
-    mocked_cfgs: MockedCfgBundle,
+    setup_test: MockedCfgBundle,
     tmp_path: Path,
 ):
     ####### load cfgs ######
-    _cfg, _ = mocked_cfgs
+    _cfg, _ = setup_test
     etc_dir = tmp_path / "etc"
     etc_dir.mkdir(exist_ok=True)
     tmp_dir = tmp_path / "tmp"
