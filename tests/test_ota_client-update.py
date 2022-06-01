@@ -1,4 +1,6 @@
 import os
+from typing import NamedTuple, Type
+from urllib.parse import urljoin
 import pytest
 import json
 import shutil
@@ -8,10 +10,17 @@ import requests_mock
 from pathlib import Path
 from threading import Thread
 
+from app.create_bank import LegacyMode
+from app.configs import GrubControlConfig
+from app.proxy_info import ProxyInfo
+import ota_client
+
 test_dir = Path(__file__).parent
 
 grub_cfg_wo_submenu = open(test_dir / "grub.cfg.wo_submenu").read()
 custom_cfg = open(test_dir / "custom.cfg").read()
+
+URL_BASE = "http://ota-server:8080/ota-server/"
 
 
 FSTAB_DEV_DISK_BY_UUID = """\
@@ -86,81 +95,137 @@ enable_local_ota_proxy: false
 """
 
 
-def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
-    import ota_client
-    import proxy_info
-    from ota_client import OtaClientFailureType, OtaStateSync
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from ota_status import OtaStatus
-    from grub_control import GrubControl
+class MockedCfgBundle(NamedTuple):
+    cfg: GrubControlConfig
+    proxy_info: ProxyInfo
+
+
+@pytest.fixture
+def mocked_cfgs(tmp_path: Path):
+    """Prepared configs bundle for testing.
+
+    Configuration:
+        1. partitions:
+            a. current: sdx3 (UUID=01234567-0123-0123-0123-0123456789ab)
+            b. standby: sdx4 (UUID=76543210-3210-3210-3210-ba9876543210)
+            c. boot: sdx2
+        2. ota status: INITIALIZED
+
+    Folders setup:
+        tmp_path/boot
+                /boot/grub/
+                /boot/grub/grub.cfg -> ../ota-partition/grub.cfg
+                /boot/grub/custom.cfg
+                /boot/ota-partition
+                /boot/ota-partition.sdx3
+                /boot/ota-partition.sdx4
+                /etc/fstab
+                /mnt/standby/
+        /dev/sdx
+        /dev/sdx2 /boot
+        /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
+        /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
+    """
     from configs import create_config
+    import app.proxy_info as proxy_info
 
-    cfg = create_config("grub")
+    ###### environment setup ######
+    base_dir = tmp_path
 
-    """
-    tmp_path/boot
-            /boot/grub/
-            /boot/grub/grub.cfg -> ../ota-partition/grub.cfg
-            /boot/grub/custom.cfg
-            /boot/ota-partition
-            /boot/ota-partition.sdx3
-            /boot/ota-partition.sdx4
-            /etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    ota_partition = boot_dir / "ota-partition"
+    # boot
+    boot_dir = base_dir / "boot"
+    ota_dir = boot_dir / "ota"
+    ota_dir.mkdir(parents=True, exist_ok=True)
+
+    ## boot dir setup
+    kernel_version = "5.4.0-73-generic"
+    vmlinuz_file = f"vmlinuz-{kernel_version}"
+    initrd_img_file = f"initrd.img-{kernel_version}"
+    config_file = f"config-{kernel_version}"
+    system_map_file = f"System.map-{kernel_version}"
+
+    (boot_dir / vmlinuz_file).write_text(vmlinuz_file)
+    (boot_dir / initrd_img_file).write_text(initrd_img_file)
+    (boot_dir / config_file).write_text(config_file)
+    (boot_dir / system_map_file).write_text(system_map_file)
+
+    ## slots
     sdx3 = boot_dir / "ota-partition.sdx3"
     sdx4 = boot_dir / "ota-partition.sdx4"
-    sdx3.mkdir()
-    sdx4.mkdir()
+    sdx3.mkdir(parents=True, exist_ok=True)
+    sdx4.mkdir(parents=True, exist_ok=True)
+    ota_partition = boot_dir / "ota-partition"
     ota_partition.symlink_to("ota-partition.sdx3")
+    # NOTE: initialized
     (sdx4 / "status").write_text("INITIALIZED")
     (sdx3 / "version").write_text("a.b.c")
 
-    # proxy info setup
-    proxy_info_file = boot_dir / "proxy_info.yaml"
-    proxy_info_file.write_text(DEFUALT_PROXY_INFO)
-
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
+    ## grub
     grub_dir = boot_dir / "grub"
     grub_dir.mkdir()
     grub_cfg = grub_dir / "grub.cfg"
     grub_cfg.symlink_to(Path("..") / "ota-partition" / "grub.cfg")
     grub_cfg.write_text(grub_cfg_wo_submenu)
 
+    # etc
     etc_dir = tmp_path / "etc"
     etc_dir.mkdir()
-    fstab = etc_dir / "fstab"
-    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
+
     default_dir = etc_dir / "default"
     default_dir.mkdir()
+    default_grub = default_dir / "grub"
+    default_grub.write_text(DEFAULT_GRUB)
 
-    # mock cfg
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(cfg, "PROXY_INFO_FILE", str(proxy_info_file))
-    proxy_cfg = proxy_info.parse_proxy_info(proxy_info_file=proxy_info_file)
-    mocker.patch.object(ota_client, "proxy_cfg", proxy_cfg)
+    fstab = etc_dir / "fstab"
+    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
 
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(ota_client, "cfg", cfg)
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
+    # prepare passwd and group
+    shutil.copy("/etc/passwd", etc_dir / "passwd")
+    shutil.copy("/etc/group", etc_dir / "group")
+
+    # mount point
+    mount_point = base_dir / "mnt"
+    mount_point.mkdir()
+    standby_slot_mount = mount_point / "standby"
+
+    ###### create test cfg ######
+    cfg = create_config("grub")
+
+    cfg.BOOT_DIR = str(boot_dir)
+    cfg.MOUNT_POINT = str(standby_slot_mount)
+    cfg.GRUB_CFG_FILE = str(grub_cfg)
+    cfg.CUSTOM_CFG_FILE = str(grub_dir / "custom.cfg")
+    cfg.FSTAB_FILE = str(etc_dir / "fstab")
+    cfg.DEFAULT_GRUB_FILE = str(etc_dir / "default" / "grub")
+    cfg.PROXY_INFO_FILE = str(ota_dir / "proxy_info.yaml")
+
+    # proxy_info.yaml
+    Path(cfg.PROXY_INFO_FILE).write_text(DEFUALT_PROXY_INFO)
+
+    ###### create fixture ######
+    return MockedCfgBundle(
+        cfg=cfg, proxy_info=proxy_info.parse_proxy_info(cfg.PROXY_INFO_FILE)
     )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
+
+
+@pytest.fixture
+def mocked_ota_client_mod(
+    mocked_cfgs: MockedCfgBundle, mocker: MockerFixture, tmp_path: Path
+):
+    """Mocked ota_client module that configured by mocked_cfgs."""
+
+    import ota_client
+    from grub_ota_partition import OtaPartition, OtaPartitionFile
+    from grub_control import GrubControl
+    import app.create_bank._legacy_mode as legacy_mode
+
+    # dirs
+    _cfg, _proxy_info = mocked_cfgs
+    boot_dir = Path(_cfg.BOOT_DIR)
+    etc_dir = tmp_path / "etc"
 
     # patch OtaPartition
+    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
     mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx3")
     mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
     mocker.patch.object(
@@ -173,7 +238,14 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
     # patch OtaPartitionFile
     mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
 
-    # patch GrubControl
+    # path GrubControl
+    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
+    mocker.patch.object(
+        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
+    )
+    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
+    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
+
     def mock__get_uuid(_, device):
         if device == "sdx3":
             return "01234567-0123-0123-0123-0123456789ab"
@@ -184,12 +256,45 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
     cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
 
     mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    reboot_mock = mocker.patch.object(GrubControl, "reboot", return_value=0)
-    _grub_reboot_mock = mocker.patch.object(
-        GrubControl, "_grub_reboot_cmd", return_value=0
-    )
-    # test start
-    ota_client_instance = ota_client.OtaClient()
+    mocker.patch.object(GrubControl, "reboot", return_value=0)
+    mocker.patch.object(GrubControl, "_grub_reboot_cmd", return_value=0)
+
+    # NOTE:
+    # basically patch to _count_menuentry is not required if
+    # mock__grub_mkconfig_cmd is more sophisticated.
+    mocker.patch.object(GrubControl, "_count_menuentry", return_value=1)
+
+    def mock__grub_mkconfig_cmd(_, outfile):
+        # TODO: depend on the outfile, grub.cfg with vmlinuz-ota entry should be output.
+        outfile.write_text(grub_cfg_wo_submenu)
+
+    mocker.patch.object(GrubControl, "_grub_mkconfig_cmd", mock__grub_mkconfig_cmd)
+
+    ###### load configs ######
+    mocker.patch.object(legacy_mode, "proxy_cfg", mocked_cfgs.proxy_info)
+    mocker.patch.object(ota_client, "proxy_cfg", _proxy_info)
+    mocker.patch.object(ota_client, "cfg", _cfg)
+
+    return ota_client
+
+
+def test_ota_client_update(
+    mocked_ota_client_mod,
+    mocked_cfgs: MockedCfgBundle,
+    tmp_path: Path,
+):
+    from ota_client import OtaClientFailureType, OtaStateSync
+    from ota_status import OtaStatus
+
+    ####### preload cfgs ######
+    _cfg, _ = mocked_cfgs
+    boot_dir = Path(_cfg.BOOT_DIR)
+
+    ###### test settings ######
+    target_version = "123.x"
+
+    ####### test start ######
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
 
     ota_fsm = OtaStateSync()
     ota_fsm.start(caller=ota_fsm._P1_ota_service)
@@ -201,8 +306,8 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
     _update_thread = Thread(
         target=ota_client_instance.update,
         args=(
-            "123.x",
-            "http://ota-server:8080/ota-server",
+            target_version,
+            URL_BASE,
             json.dumps({"test": "my-cookie"}),
         ),
         kwargs={"fsm": ota_fsm},
@@ -266,7 +371,7 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
         == "initrd.img-5.8.0-53-generic"  # FIXME
     )
     assert open(boot_dir / "ota-partition.sdx4" / "status").read() == "UPDATING"
-    assert open(boot_dir / "ota-partition.sdx4" / "version").read() == "123.x"
+    assert open(boot_dir / "ota-partition.sdx4" / "version").read() == target_version
     # make sure grub.cfg is not created yet in standby boot partition
     assert not (boot_dir / "ota-partition.sdx4" / "grub.cfg").is_file()
 
@@ -275,8 +380,10 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
     assert open(boot_dir / "grub" / "custom.cfg").read() == custom_cfg
 
     # number of menuentry in grub_cfg_wo_submenu is 9
-    _grub_reboot_mock.assert_called_once_with(9)
-    reboot_mock.assert_called_once()
+    ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_called_once_with(
+        9
+    )
+    ota_client_instance._boot_control._grub_control.reboot.assert_called_once()
 
     # fstab
     assert (
@@ -285,107 +392,14 @@ def test_ota_client_update(mocker: MockerFixture, tmp_path: Path):
     assert ota_client_instance.get_ota_status() == OtaStatus.UPDATING
 
 
-def test_ota_client_update_multiple_call(mocker, tmp_path):
-    import ota_client
-    import proxy_info
+def test_ota_client_update_multiple_call(mocked_ota_client_mod):
     from ota_client import OtaClientFailureType, OtaStateSync
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from grub_control import GrubControl
-    from configs import create_config
 
-    cfg = create_config("grub")
+    ###### test settings ######
+    target_version = "123.x"
 
-    """
-    tmp_path/boot
-            /boot/grub/
-            /boot/grub/grub.cfg -> ../ota-partition/grub.cfg
-            /boot/grub/custom.cfg
-            /boot/ota-partition
-            /boot/ota-partition.sdx3
-            /boot/ota-partition.sdx4
-            /etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    ota_partition = boot_dir / "ota-partition"
-    sdx3 = boot_dir / "ota-partition.sdx3"
-    sdx4 = boot_dir / "ota-partition.sdx4"
-    sdx3.mkdir()
-    sdx4.mkdir()
-    ota_partition.symlink_to("ota-partition.sdx3")
-    (sdx4 / "status").write_text("INITIALIZED")
-    (sdx3 / "version").write_text("a.b.c")
-
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
-    grub_dir = boot_dir / "grub"
-    grub_dir.mkdir()
-    grub_cfg = grub_dir / "grub.cfg"
-    grub_cfg.symlink_to(Path("..") / "ota-partition" / "grub.cfg")
-    grub_cfg.write_text(grub_cfg_wo_submenu)
-
-    etc_dir = tmp_path / "etc"
-    etc_dir.mkdir()
-    fstab = etc_dir / "fstab"
-    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
-    default_dir = etc_dir / "default"
-    default_dir.mkdir()
-
-    # proxy info setup
-    proxy_info_file = boot_dir / "proxy_info.yaml"
-    proxy_info_file.write_text(DEFUALT_PROXY_INFO)
-
-    # proxy info
-    mocker.patch.object(cfg, "PROXY_INFO_FILE", str(proxy_info_file))
-    proxy_cfg = proxy_info.parse_proxy_info(proxy_info_file=proxy_info_file)
-
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(ota_client, "cfg", cfg)
-    mocker.patch.object(ota_client, "proxy_cfg", proxy_cfg)
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
-    )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
-
-    # patch OtaPartition
-    mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx3")
-    mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
-    mocker.patch.object(
-        OtaPartition, "_get_parent_device_file", return_value="/dev/sdx"
-    )
-    mocker.patch.object(
-        OtaPartition, "_get_standby_device_file", return_value="/dev/sdx4"
-    )
-
-    # patch OtaPartitionFile
-    mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
-
-    # patch GrubControl
-    def mock__get_uuid(_, device):
-        if device == "sdx3":
-            return "01234567-0123-0123-0123-0123456789ab"
-        if device == "sdx4":
-            return "76543210-3210-3210-3210-ba9876543210"
-
-    mocker.patch.object(GrubControl, "_get_uuid", mock__get_uuid)
-    cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
-
-    mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    mocker.patch.object(GrubControl, "reboot", return_value=0)
-    mocker.patch.object(GrubControl, "_grub_reboot_cmd", return_value=0)
-    # test start
-    ota_client_instance = ota_client.OtaClient()
+    ####### test start ######
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
     # check if _failure_type and _failure_reason are cleared by update call.
     ota_client_instance._failure_type = OtaClientFailureType.UNRECOVERABLE
     ota_client_instance._failure_reason = "fuga"
@@ -403,8 +417,8 @@ def test_ota_client_update_multiple_call(mocker, tmp_path):
     _main_update_thread = Thread(
         target=ota_client_instance.update,
         args=(
-            "123.x",
-            "http://ota-server:8080/ota-server",
+            target_version,
+            URL_BASE,
             json.dumps({"test": "main-thread"}),
         ),
         kwargs={"fsm": _main_fsm},
@@ -446,8 +460,8 @@ def test_ota_client_update_multiple_call(mocker, tmp_path):
     th2 = Thread(
         target=_wrapped_t,
         args=(
-            "123.x",
-            "http://ota-server:8080/ota-server",
+            target_version,
+            URL_BASE,
             json.dumps({"test": "thread2"}),
         ),
         kwargs={"fsm": _thread2_fsm},
@@ -506,108 +520,23 @@ def test_ota_client_update_multiple_call(mocker, tmp_path):
     ],
 )
 def test_ota_client_update_regular_download_error(
-    mocker: MockerFixture, tmp_path, error_injection, failure_reason_has
+    mocked_ota_client_mod,
+    mocked_cfgs: MockedCfgBundle,
+    error_injection,
+    failure_reason_has,
 ):
-    import ota_client
-    import proxy_info
     from ota_client import OtaClientFailureType, OtaStateSync
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
     from ota_status import OtaStatus
-    from grub_control import GrubControl
-    from configs import create_config
 
-    cfg = create_config("grub")
+    # preload
+    _cfg, _ = mocked_cfgs
+    boot_dir = Path(_cfg.BOOT_DIR)
 
-    """
-    tmp_path/boot
-            /boot/grub/
-            /boot/grub/grub.cfg -> ../ota-partition/grub.cfg
-            /boot/grub/custom.cfg
-            /boot/ota-partition
-            /boot/ota-partition.sdx3
-            /boot/ota-partition.sdx4
-            /etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    ota_partition = boot_dir / "ota-partition"
-    sdx3 = boot_dir / "ota-partition.sdx3"
-    sdx4 = boot_dir / "ota-partition.sdx4"
-    sdx3.mkdir()
-    sdx4.mkdir()
-    ota_partition.symlink_to("ota-partition.sdx3")
-    (sdx4 / "status").write_text("INITIALIZED")
-    (sdx3 / "version").write_text("a.b.c")
+    ###### test settings ######
+    target_version = "123.x"
 
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
-    grub_dir = boot_dir / "grub"
-    grub_dir.mkdir()
-    grub_cfg = grub_dir / "grub.cfg"
-    grub_cfg.symlink_to(Path("..") / "ota-partition" / "grub.cfg")
-    grub_cfg.write_text(grub_cfg_wo_submenu)
-
-    etc_dir = tmp_path / "etc"
-    etc_dir.mkdir()
-    fstab = etc_dir / "fstab"
-    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
-    default_dir = etc_dir / "default"
-    default_dir.mkdir()
-
-    proxy_info_file = boot_dir / "proxy_info.yaml"
-    proxy_info_file.write_text(DEFUALT_PROXY_INFO)
-    proxy_cfg = proxy_info.parse_proxy_info(proxy_info_file=proxy_info_file)
-
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(ota_client, "cfg", cfg)
-    mocker.patch.object(ota_client, "proxy_cfg", proxy_cfg)
-
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
-    )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
-
-    # patch OtaPartition
-    mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx3")
-    mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
-    mocker.patch.object(
-        OtaPartition, "_get_parent_device_file", return_value="/dev/sdx"
-    )
-    mocker.patch.object(
-        OtaPartition, "_get_standby_device_file", return_value="/dev/sdx4"
-    )
-
-    # patch OtaPartitionFile
-    mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
-
-    # patch GrubControl
-    def mock__get_uuid(_, device):
-        if device == "sdx3":
-            return "01234567-0123-0123-0123-0123456789ab"
-        if device == "sdx4":
-            return "76543210-3210-3210-3210-ba9876543210"
-
-    mocker.patch.object(GrubControl, "_get_uuid", mock__get_uuid)
-    cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
-
-    mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    reboot_mock = mocker.patch.object(GrubControl, "reboot", return_value=0)
-    _grub_reboot_mock = mocker.patch.object(
-        GrubControl, "_grub_reboot_cmd", return_value=0
-    )
     # test start
-    ota_client_instance = ota_client.OtaClient()
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
 
     ota_fsm = OtaStateSync()
     ota_fsm.start(caller=ota_fsm._P1_ota_service)
@@ -620,13 +549,13 @@ def test_ota_client_update_regular_download_error(
         with requests_mock.Mocker(real_http=True) as m:
             m.register_uri(
                 "GET",
-                "http://ota-server:8080/ota-server/data/usr/bin/kill",
+                urljoin(URL_BASE, "data/usr/bin/kill"),
                 **error_injection,
             )
 
             ota_client_instance.update(
-                "123.x",
-                "http://ota-server:8080/ota-server",
+                target_version,
+                URL_BASE,
                 json.dumps({"test": "my-cookie"}),
                 fsm=ota_fsm,
             )
@@ -661,128 +590,49 @@ def test_ota_client_update_regular_download_error(
     # custom.cfg is not created
     assert not (boot_dir / "grub" / "custom.cfg").exists()
 
-    _grub_reboot_mock.assert_not_called()
-    reboot_mock.assert_not_called()
+    ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_not_called()
+    ota_client_instance._boot_control._grub_control.reboot.assert_not_called()
 
     assert ota_client_instance.get_ota_status() == OtaStatus.FAILURE
 
 
-def test_ota_client_update_with_initialize_boot_partition(mocker, tmp_path):
-    import ota_client
-    import proxy_info
+def test_ota_client_update_with_initialize_boot_partition(
+    mocked_ota_client_mod,
+    mocked_cfgs: MockedCfgBundle,
+    mocker: MockerFixture,
+    tmp_path: Path,
+):
     from ota_client import OtaStateSync
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
     from ota_status import OtaStatus
     from grub_control import GrubControl
-    from configs import create_config
 
-    cfg = create_config("grub")
+    ###### preload cfgs ######
+    _cfg, _ = mocked_cfgs
+    boot_dir = Path(_cfg.BOOT_DIR)
+    grub_cfg = str(_cfg.GRUB_CFG_FILE)
 
-    """
-    tmp_path/boot
-            /boot/grub/
-            /boot/grub/grub.cfg
-            /boot/grub/custom.cfg
-            /etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-
-    kernel_version = "5.4.0-73-generic"
-    vmlinuz_file = f"vmlinuz-{kernel_version}"
-    initrd_img_file = f"initrd.img-{kernel_version}"
-    config_file = f"config-{kernel_version}"
-    system_map_file = f"System.map-{kernel_version}"
-
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    (boot_dir / vmlinuz_file).write_text(vmlinuz_file)
-    (boot_dir / initrd_img_file).write_text(initrd_img_file)
-    (boot_dir / config_file).write_text(config_file)
-    (boot_dir / system_map_file).write_text(system_map_file)
-
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
-    grub_dir = boot_dir / "grub"
-    grub_dir.mkdir()
-    grub_cfg = grub_dir / "grub.cfg"
-    grub_cfg.write_text(grub_cfg_wo_submenu)
-
-    etc_dir = tmp_path / "etc"
-    etc_dir.mkdir()
-    fstab = etc_dir / "fstab"
-    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
-    default_dir = etc_dir / "default"
-    default_dir.mkdir()
-    default_grub = default_dir / "grub"
-    default_grub.write_text(DEFAULT_GRUB)
-
-    # proxy info setup
-    proxy_info_file = boot_dir / "proxy_info.yaml"
-    proxy_info_file.write_text(DEFUALT_PROXY_INFO)
-    proxy_cfg = proxy_info.parse_proxy_info(proxy_info_file=proxy_info_file)
-    mocker.patch.object(ota_client, "proxy_cfg", proxy_cfg)
-
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(ota_client, "cfg", cfg)
-
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
-    )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
-
-    # patch OtaPartition
-    mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx3")
-    mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
-    mocker.patch.object(
-        OtaPartition, "_get_parent_device_file", return_value="/dev/sdx"
-    )
-    mocker.patch.object(
-        OtaPartition, "_get_standby_device_file", return_value="/dev/sdx4"
-    )
-
-    # patch OtaPartitionFile
-    mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
-
-    # patch GrubControl
-    def mock__get_uuid(_, device):
-        if device == "sdx3":
-            return "01234567-0123-0123-0123-0123456789ab"
-        if device == "sdx4":
-            return "76543210-3210-3210-3210-ba9876543210"
-
-    mocker.patch.object(GrubControl, "_get_uuid", mock__get_uuid)
-    cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
-
-    mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    reboot_mock = mocker.patch.object(GrubControl, "reboot", return_value=0)
-    _grub_reboot_mock = mocker.patch.object(
-        GrubControl, "_grub_reboot_cmd", return_value=0
-    )
-    # NOTE:
-    # basically patch to _count_menuentry is not required if
-    # mock__grub_mkconfig_cmd is more sophisticated.
-    mocker.patch.object(GrubControl, "_count_menuentry", return_value=1)
+    ###### extra patch ######
+    grub_cfg_salt = "grub_cfg_salt"
 
     def mock__grub_mkconfig_cmd(_, outfile):
         # TODO: depend on the outfile, grub.cfg with vmlinuz-ota entry should be output.
-        salt = " "  # to make the data different from grub_cfg_wo_submenu
-        outfile.write_text(grub_cfg_wo_submenu + salt)
+        # to make the data different from grub_cfg_wo_submenu
+        outfile.write_text(grub_cfg_wo_submenu + grub_cfg_salt)
 
+    # re-patch again
     mocker.patch.object(GrubControl, "_grub_mkconfig_cmd", mock__grub_mkconfig_cmd)
 
-    # test start
-    ota_client_instance = ota_client.OtaClient()
+    # remove the ota status file to let ota_client initialize grub configuration
+    ota_partition_sdx3 = boot_dir / "ota-partition.sdx3"
+    ota_partition_sdx4 = boot_dir / "ota-partition.sdx4"
+    (ota_partition_sdx3 / "version").unlink(missing_ok=True)
+    (ota_partition_sdx4 / "status").unlink(missing_ok=True)
+
+    ###### test settings ######
+    target_version = "123.x"
+
+    ###### test start ######
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
 
     ota_fsm = OtaStateSync()
     ota_fsm.start(caller=ota_fsm._P1_ota_service)
@@ -799,19 +649,19 @@ def test_ota_client_update_with_initialize_boot_partition(mocker, tmp_path):
     # grub.cfg is generated under ota-partition
     assert (
         open(boot_dir / "ota-partition" / "grub.cfg").read()
-        == grub_cfg_wo_submenu + " "
+        == grub_cfg_wo_submenu + grub_cfg_salt
     )
     assert (
         open(boot_dir / "ota-partition.sdx3" / "grub.cfg").read()
-        == grub_cfg_wo_submenu + " "
+        == grub_cfg_wo_submenu + grub_cfg_salt
     )
 
     # start the update in another thread
     _update_thread = Thread(
         target=ota_client_instance.update,
         args=(
-            "123.x",
-            "http://ota-server:8080/ota-server",
+            target_version,
+            URL_BASE,
             json.dumps({"test": "my-cookie"}),
         ),
         kwargs={"fsm": ota_fsm},
@@ -844,15 +694,17 @@ def test_ota_client_update_with_initialize_boot_partition(mocker, tmp_path):
         == "initrd.img-5.8.0-53-generic"  # FIXME
     )
     assert open(boot_dir / "ota-partition.sdx4" / "status").read() == "UPDATING"
-    assert open(boot_dir / "ota-partition.sdx4" / "version").read() == "123.x"
+    assert open(boot_dir / "ota-partition.sdx4" / "version").read() == target_version
 
     # custom.cfg is created
     assert (boot_dir / "grub" / "custom.cfg").is_file()
     assert open(boot_dir / "grub" / "custom.cfg").read() == custom_cfg
 
     # number of menuentry in grub_cfg_wo_submenu is 9
-    _grub_reboot_mock.assert_called_once_with(9)
-    reboot_mock.assert_called_once()
+    ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_called_once_with(
+        9
+    )
+    ota_client_instance._boot_control._grub_control.reboot.assert_called_once()
 
     # fstab
     assert (
@@ -862,111 +714,30 @@ def test_ota_client_update_with_initialize_boot_partition(mocker, tmp_path):
     assert ota_client_instance.get_ota_status() == OtaStatus.UPDATING
 
 
-def test_ota_client_update_post_process(mocker, tmp_path):
-    import ota_client
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
+def test_ota_client_update_post_process(
+    mocked_ota_client_mod,
+    mocked_cfgs: MockedCfgBundle,
+    mocker: MockerFixture,
+):
+    from grub_ota_partition import OtaPartition
     from ota_status import OtaStatus
-    from grub_control import GrubControl
-    from configs import create_config
 
-    cfg = create_config("grub")
+    ####### preload cfgs ######
+    _cfg, _ = mocked_cfgs
+    boot_dir = Path(_cfg.BOOT_DIR)
 
-    """
-    tmp_path/boot
-            /boot/grub/
-            /boot/grub/grub.cfg -> ../ota-partition/grub.cfg
-            /boot/grub/custom.cfg
-            /etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    ota_partition = boot_dir / "ota-partition"
-    sdx3 = boot_dir / "ota-partition.sdx3"
-    sdx4 = boot_dir / "ota-partition.sdx4"
-    sdx3.mkdir()
-    sdx4.mkdir()
-    ota_partition.symlink_to("ota-partition.sdx3")
-    (sdx4 / "status").write_text("UPDATING")
-
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
-    grub_dir = boot_dir / "grub"
-    grub_dir.mkdir()
-    grub_cfg = grub_dir / "grub.cfg"
-    grub_cfg.symlink_to(Path("..") / "ota-partition" / "grub.cfg")
-    grub_cfg.write_text(grub_cfg_wo_submenu)
-
-    etc_dir = tmp_path / "etc"
-    etc_dir.mkdir()
-    fstab = etc_dir / "fstab"
-    fstab.write_text(FSTAB_DEV_DISK_BY_UUID)
-    default_dir = etc_dir / "default"
-    default_dir.mkdir()
-    default_grub = default_dir / "grub"
-    default_grub.write_text(DEFAULT_GRUB)
-
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(ota_client, "cfg", cfg)
-
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
-    )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
-
-    # patch OtaPartition
+    ###### extra patching #######
+    # now we are at new slot
     mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx4")
-    mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
-    mocker.patch.object(
-        OtaPartition, "_get_parent_device_file", return_value="/dev/sdx"
-    )
     mocker.patch.object(
         OtaPartition, "_get_standby_device_file", return_value="/dev/sdx3"
     )
+    sdx4 = boot_dir / "ota-partition.sdx4"
+    (sdx4 / "status").write_text("UPDATING")
 
-    # patch OtaPartitionFile
-    mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
-
-    # patch GrubControl
-    def mock__get_uuid(dummy1, device):
-        if device == "sdx3":
-            return "01234567-0123-0123-0123-0123456789ab"
-        if device == "sdx4":
-            return "76543210-3210-3210-3210-ba9876543210"
-
-    mocker.patch.object(GrubControl, "_get_uuid", mock__get_uuid)
-    cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
-
-    mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    reboot_mock = mocker.patch.object(GrubControl, "reboot", return_value=0)
-    _grub_reboot_mock = mocker.patch.object(
-        GrubControl, "_grub_reboot_cmd", return_value=0
-    )
-    # NOTE:
-    # basically patch to _count_menuentry is not required if
-    # mock__grub_mkconfig_cmd is more sophisticated.
-    mocker.patch.object(GrubControl, "_count_menuentry", return_value=1)
-
-    def mock__grub_mkconfig_cmd(_, outfile):
-        # TODO: depend on the outfile, grub.cfg with vmlinuz-ota entry should be output.
-        outfile.write_text(grub_cfg_wo_submenu)
-
-    mocker.patch.object(GrubControl, "_grub_mkconfig_cmd", mock__grub_mkconfig_cmd)
-
-    # test start
-    ota_client_instance = ota_client.OtaClient()
+    ###### test start ######
+    # simulate reboot finished, let ota_client init
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
 
     # make sure boot ota-partition is switched
     assert os.readlink(boot_dir / "ota-partition") == "ota-partition.sdx4"
@@ -978,8 +749,8 @@ def test_ota_client_update_post_process(mocker, tmp_path):
         open(boot_dir / "ota-partition.sdx4" / "grub.cfg").read() == grub_cfg_wo_submenu
     )
 
-    _grub_reboot_mock.assert_not_called()
-    reboot_mock.assert_not_called()
+    ota_client_instance._boot_control._grub_control._grub_reboot_cmd.assert_not_called()
+    ota_client_instance._boot_control._grub_control.reboot.assert_not_called()
     # TODO:
     # assert /etc/default/grub is updated
     # assert /boot/grub/grub.cfg is updated
@@ -994,78 +765,34 @@ PERSISTENTS_TXT = """\
 """
 
 
-def test_ota_client__copy_persistent_files(mocker, tmp_path):
-    import ota_client
-    from configs import config as cfg
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from grub_control import GrubControl
+def test_ota_client__copy_persistent_files(
+    mocked_ota_client_mod,
+    mocked_cfgs: MockedCfgBundle,
+    tmp_path: Path,
+):
+    ####### load cfgs ######
+    _cfg, _ = mocked_cfgs
+    etc_dir = tmp_path / "etc"
+    etc_dir.mkdir(exist_ok=True)
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
 
-    """
-    tmp_path/etc/fstab
-            /mnt/standby/
-    /dev/sdx
-    /dev/sdx2 /boot
-    /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
-    /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
-    """
-    # directory setup
-    boot_dir = tmp_path / "boot"
-    boot_dir.mkdir()
-    ota_partition = boot_dir / "ota-partition"
-    sdx3 = boot_dir / "ota-partition.sdx3"
-    sdx4 = boot_dir / "ota-partition.sdx4"
-    sdx3.mkdir()
-    sdx4.mkdir()
-    ota_partition.symlink_to("ota-partition.sdx3")
-    (sdx4 / "status").write_text("INITIALIZED")
-
-    # directory setup
-    mount_dir = tmp_path / "mnt"
-    mount_dir.mkdir()
-
+    ####### prepare standby slot ######
+    mount_dir = Path(_cfg.MOUNT_POINT)
     passwd_file = mount_dir / "etc" / "passwd"
     group_file = mount_dir / "etc" / "group"
-    (mount_dir / "etc").mkdir()
+    (mount_dir / "etc").mkdir(parents=True, exist_ok=True)
     # copy /etc/passwd to mount_dir / "etc/passwd"
     shutil.copy("/etc/passwd", passwd_file)
     # copy /etc/group to mount_dir / "etc/group"
     shutil.copy("/etc/group", group_file)
 
-    etc_dir = tmp_path / "etc"
-    etc_dir.mkdir()
+    ####### prepare persistents file ######
+    persistents_txt = tmp_dir / "persistents.txt"
+    persistents_txt.write_text(PERSISTENTS_TXT)
 
-    tmp_dir = tmp_path / "tmp"
-    tmp_dir.mkdir()
-    persistents = tmp_dir / "persistents.txt"
-    persistents.write_text(PERSISTENTS_TXT)
-
-    # file path patch
-    mocker.patch.object(OtaPartition, "BOOT_DIR", boot_dir)
-    mocker.patch.object(cfg, "MOUNT_POINT", tmp_path / "mnt" / "standby")
-    mocker.patch.object(ota_client, "cfg", cfg)
-
-    mocker.patch.object(GrubControl, "GRUB_CFG_FILE", boot_dir / "grub" / "grub.cfg")
-    mocker.patch.object(
-        GrubControl, "CUSTOM_CFG_FILE", boot_dir / "grub" / "custom.cfg"
-    )
-    mocker.patch.object(GrubControl, "FSTAB_FILE", tmp_path / "etc" / "fstab")
-    mocker.patch.object(GrubControl, "DEFAULT_GRUB_FILE", etc_dir / "default" / "grub")
-
-    # patch OtaPartition
-    mocker.patch.object(OtaPartition, "_get_root_device_file", return_value="/dev/sdx3")
-    mocker.patch.object(OtaPartition, "_get_boot_device_file", return_value="/dev/sdx2")
-    mocker.patch.object(
-        OtaPartition, "_get_parent_device_file", return_value="/dev/sdx"
-    )
-    mocker.patch.object(
-        OtaPartition, "_get_standby_device_file", return_value="/dev/sdx4"
-    )
-
-    # patch OtaPartitionFile
-    mocker.patch.object(OtaPartitionFile, "_mount_cmd", return_value=0)
-
-    # test start
-    ota_client_instance = ota_client.OtaClient()
-    ota_client_instance._copy_persistent_files(persistents, mount_dir)
+    ####### test start ######
+    ota_client_instance = mocked_ota_client_mod.OtaClient()
+    ota_client_instance._copy_persistent_files(persistents_txt, mount_dir)
 
     assert open("/etc/hostname").read() == open(mount_dir / "etc" / "hostname").read()
