@@ -59,6 +59,9 @@ class _HardlinkTracker:
 
         return self.first_copy_path
 
+    def subscribe_no_wait(self) -> Path:
+        return self.first_copy_path
+
 
 class HardlinkRegister:
     def __init__(self):
@@ -183,7 +186,7 @@ class CreateRegularStatsCollector:
         try:
             sts: List[RegularStats] = fut.result()
             for st in sts:
-                self._que.put_nowait(sts)
+                self._que.put_nowait(st)
 
             self.se.release()
         except Exception as e:
@@ -212,148 +215,224 @@ class CreateRegularStatsCollector:
                 raise self.last_error from None
 
 
-class RegularInfSet:
-    def __init__(self, _hash: str, *, skip_verify) -> None:
-        self._hash = _hash
-        self._no_first_copy = skip_verify
-        self.data: Set[RegularInf] = None
-        self._first_copy: RegularInf = None
+class RegularInfSet(Set[RegularInf]):
+    def __init__(self, __iterable) -> None:
+        super().__init__(__iterable)
+        self.entry_to_be_collected: RegularInf = None
+        self.skip_cleanup = False
 
-    def __iter__(self):
-        return self
-
-    def __next__(self) -> Tuple[bool, RegularInf]:
-        """Always return first_copy if possible.
-
-        Returns:
-            A bool indicates whether it is the last entry.
-        """
+    def iter_entries(self) -> Generator[Tuple[bool, RegularInf], None, None]:
         try:
-            if self._first_copy:
-                res = self._first_copy
-                self._first_copy = None
-                return self.is_empty(), res
-
-            res = self.data.pop()
-            return self.is_empty(), res
+            entry = self.pop()
+            return len(self) == 0, entry
         except KeyError:
-            raise StopIteration
+            pass
 
-    def add(self, entry: RegularInf):
-        # prepare a first copy for this hash group
-        if (
-            not self._no_first_copy
-            and self._first_copy is None
-            and verify_file(entry.path, entry.sha256hash, entry.size)
-        ):
-            self._first_copy = entry
+    def ensure_copy(self, skip_verify: bool, *, root: Path) -> bool:
+        """Collect one entry within this hash group."""
+        if self.entry_to_be_collected is not None:
+            return True
 
-        if self.data is None:
-            self.data = set()
-        self.data.add(entry)
+        for entry in self:
+            if skip_verify or entry.verify_file(src_root=root):
+                self.entry_to_be_collected = entry
+                return True
 
-    def remove(self, entry: RegularInf):
-        self.data.remove(entry)
+        return False
 
-    def update(self, _other: "RegularInfSet"):
-        self.data.update(_other.data)
+    def collect_entries_to_be_recycled(self, dst: Path, *, root: Path):
+        if self.entry_to_be_collected is not None:
+            try:
+                entry = self.entry_to_be_collected
+                entry.copy2dst(dst / entry.sha256hash, root=root)
+            except (FileNotFoundError, shutil.SameFileError):
+                pass  # ignore failure
 
     def is_empty(self):
-        return self._first_copy is None and len(self.data) == 0
-
-    def is_first_copy_available(self) -> bool:
-        return self._no_first_copy
+        """NOTE: do not cleanup if entry_to_be_collected is assigned"""
+        return self.entry_to_be_collected is None and len(self) == 0
 
 
-class RegularDelta(UserDict):
-    def __init__(self, *, skip_verify=True) -> None:
-        self._skip_verify = skip_verify
-        self.data: Dict[str, RegularInfSet] = dict()
+class RegularDelta(Dict[str, RegularInfSet]):
+    def skip_cleanup(self, _hash: str):
+        if _hash in self:
+            self[_hash].skip_cleanup = True
 
     def add_entry(self, entry: RegularInf):
         _hash = entry.sha256hash
-        if _hash in self.data:
-            self.data[_hash].add(entry)
+        if _hash in self:
+            self[_hash].add(entry)
         else:
-            self.data[_hash] = RegularInfSet(_hash, skip_verify=self._skip_verify)
+            self[_hash] = RegularInfSet([entry])
 
     def remove_entry(self, entry: RegularInf):
         _hash = entry.sha256hash
-        if _hash not in self.data:
-            raise KeyError(f"{_hash} not registered")
+        if _hash not in self:
+            return
 
-        _set = self.data[_hash]
+        _set = self[_hash]
         _set.remove(entry)
-        if _set.is_empty():  # cleanup empty pathset
-            del self.data[_hash]
+        if _set.is_empty():  # cleanup empty hash group
+            del self[_hash]
 
     def merge_entryset(self, _hash: str, _pathset: RegularInfSet):
-        _target_set = self.data[_hash]
-        _target_set.update(_pathset)
+        if _hash not in self:
+            return
 
-    def __contains__(self, item: RegularInf):
-        _hash = item.sha256hash
-        return _hash in self.data and item in self.data[_hash]
+        self[_hash].update(_pathset)
 
-    def if_contains_hash(self, _hash: str) -> bool:
-        return _hash in self.data
+    def ensure_copy(self, _hash: str, *, root: Path, skip_verify=False):
+        """
+        Args:
+            skip_verify: if the entry has been verified,
+                no need to double verify it.
+        """
+        if _hash not in self:
+            return
+
+        self[_hash].ensure_copy(skip_verify, root=root)
+
+    def contains_entry(self, entry: RegularInf):
+        if entry.sha256hash in self:
+            _set: RegularInfSet = self[entry.sha256hash]
+            return entry in _set
+
+        return False
+
+    def contains_hash(self, _hash: str) -> bool:
+        return _hash in self
+
+
+def create_regular_inf(fpath: Union[str, Path], *, root: Path) -> RegularInf:
+    # create a new instance of path
+    path = Path(fpath)
+    stat = path.stat()
+
+    nlink, inode = None, None
+    if stat.st_nlink > 0:
+        nlink = stat.st_nlink
+        inode = stat.st_ino
+
+    return RegularInf(
+        mode=stat.st_mode,
+        uid=stat.st_uid,
+        gid=stat.st_gid,
+        size=stat.st_size,
+        nlink=nlink,
+        sha256hash=file_sha256(fpath),
+        path=path.relative_to(root),
+        inode=inode,
+    )
+
+
+class _RegularDeltaCollector:
+    def __init__(self, delta: RegularDelta) -> None:
+        self._lock = Lock()
+        self._store = delta
+
+    def collect_callback(self, fut: Future):
+        try:
+            entry: RegularInf = fut.result()
+            with self._lock:
+                self._store.add_entry(entry)
+        except Exception:
+            pass
 
 
 class DeltaGenerator:
-    # folders to scan on
-    # NOTE: currently only handle /var/lib
-    TARGET_FOLDERS: ClassVar[List[str]] = ["/var/lib"]
+    # folders to scan on bank
+    TARGET_FOLDERS: ClassVar[List[str]] = [
+        "/etc",
+        "/greengrass",
+        "/home",
+        "/var/lib",
+        "/opt",
+        "/usr",
+        "/var/lib",
+    ]
+    MAX_FOLDER_DEEPTH = 16
+    MAX_FILENUM_PER_FOLDER = 1024
 
-    def __init__(self, old_reg, new_reg) -> None:
+    def __init__(self, old_reg, new_reg, *, bank_root: Path) -> None:
+        """
+        Attrs:
+            bank_root: the root of the bank(old) that we calculate delta from.
+        """
         self._old_reg = old_reg
         self._new_reg = new_reg
+        self._root = bank_root
 
-    def _calculate_delta_offline(
-        self,
-    ) -> Tuple[RegularDelta, RegularDelta, RegularDelta]:
-        _rm, _new, _hold = (
-            RegularDelta(skip_verify=True),
-            RegularDelta(skip_verify=True),
-            RegularDelta(),  # _hold set needed to be verify
-        )
-        with open(self._old_reg, "r") as f:
-            for l in f:
-                entry = RegularInf(l)
-                _rm.add_entry(entry)
+    def _calculate_current_bank_regulars(self) -> Tuple[bool, RegularDelta]:
+        skip_verify, _rm = False, RegularDelta()
 
+        if Path(self._old_reg).is_file():
+            with open(self._old_reg, "r") as f:
+                for l in f:
+                    entry = RegularInf(l)
+                    _rm.add_entry(entry)
+        else:
+            _collector = _RegularDeltaCollector(_rm)
+            with ThreadPoolExecutor(thread_name_prefix="calculate_delta") as pool:
+                for root_folder in self.TARGET_FOLDERS:
+                    for dirpath, dirnames, filenames in os.walk(
+                        root_folder, topdown=True, followlinks=False
+                    ):
+                        cur_dir = Path(dirpath)
+                        if len(cur_dir.parents) > self.MAX_FOLDER_DEEPTH:
+                            logger.warning(
+                                f"reach max_folder_deepth on {cur_dir!r}, skip"
+                            )
+                            dirnames.clear()
+                            continue
+
+                        # skip files that over the max_filenum_per_folder
+                        filenames = filenames[: self.MAX_FILENUM_PER_FOLDER]
+                        for fname in filenames:
+                            fut = pool.submit(
+                                create_regular_inf, cur_dir / fname, root=self._root
+                            )
+                            fut.add_done_callback(_collector.collect_callback)
+
+            skip_verify = True
+
+        return skip_verify, _rm
+
+    def calculate_delta(self) -> Tuple[RegularDelta, RegularDelta, RegularDelta, int]:
+        skip_verify, _rm = self._calculate_current_bank_regulars()
+        _hold, _new = RegularDelta(), RegularDelta()
+
+        # 1st-pass, comparing old and new by path
         with open(self._new_reg, "r") as f:
-            for l in f:
+            for count, l in enumerate(f):
                 entry = RegularInf(l)
-                if entry in _rm:
+                if _rm.contains_entry(entry):
+                    # this path exists in both old and new
                     _hold.add_entry(entry)
+                    _hold.ensure_copy(
+                        entry.sha256hash,
+                        root=self._root,
+                        skip_verify=skip_verify,
+                    )
+
                     _rm.remove_entry(entry)
-                    continue
+                else:
+                    # completely new path
+                    _new.add_entry(entry)
 
-                # add to _new
-                _new.add_entry(entry)
+        # 2nd-pass: comparing _rm with _new by hash
+        #   cover the case that paths in _rm and _new have same hash
+        for _hash in _rm:
+            if _new.contains_hash(_hash):
+                # for hash that exists in both _rm and _new,
+                # recycle one entry in _rm to recycle folder.
+                _rm.ensure_copy(_hash, root=self._root)
 
-        # optimize the calculated deltas
-        _optimized_hash = []
-        for _hash, _pathset in _new.items():
-            if _hold.if_contains_hash(_hash):
-                # merge this entry into the _existed
-                _hold.merge_entryset(_hash, _pathset)
-                _optimized_hash.append(_hash)
+        # 3rd-pass: comparing _new and _hold by hash
+        #   cover the case that new paths point to files that
+        #   existed in the _hold(detected by hash).
+        for _hash in _new:
+            if _hold.contains_hash(_hash):
+                # specially label this hash group
+                _hold.skip_cleanup(_hash)
 
-        # discard the optimized hash group
-        for _hash in _optimized_hash:
-            _new.pop(_hash)
-
-        return _new, _hold, _rm
-
-    def _calculate_delta_online(
-        self,
-    ) -> Tuple[RegularDelta, RegularDelta, RegularDelta]:
-        _rm, _new, _hold = (
-            RegularDelta(skip_verify=True),
-            RegularDelta(skip_verify=True),
-            RegularDelta(),  # _hold set needed to be verify
-        )
-
-    def calculate_delta(self) -> Tuple[RegularDelta, RegularDelta, RegularDelta]:
-        pass
+        return _new, _hold, _rm, count
