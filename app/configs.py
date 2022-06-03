@@ -2,6 +2,7 @@ import enum
 import platform
 from dataclasses import dataclass, field
 from logging import INFO
+from typing import Literal
 
 
 class OTAFileCacheControl(enum.Enum):
@@ -95,12 +96,16 @@ class _BaseConfig:
     MOUNT_POINT: str = "/mnt/standby"
 
     # ota-client behavior setting
-    CHUNK_SIZE: int = 1 * 1024 * 1024  # 1MB
+    LOCAL_CHUNK_SIZE: int = 4 * 1024 ** 2 # 4MB
+    CHUNK_SIZE: int = 1 * 1024 ** 2  # 1MB
     DOWNLOAD_RETRY: int = 5
     DOWNLOAD_BACKOFF_MAX: int = 10 # seconds
     MAX_CONCURRENT_DOWNLOAD: int = 8
     MAX_CONCURRENT_TASKS: int = 1024
     STATS_COLLECT_INTERVAL: int = 1 # second
+
+    # create bank mechanism
+    SLOT_UPDATE_MODE: Literal['legacy', 'rebuild', 'in_place'] = "legacy"
 
 
 @dataclass

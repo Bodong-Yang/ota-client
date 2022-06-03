@@ -15,16 +15,39 @@ class StandByBankCreatorProtocol(Protocol):
         cookies: authentication cookies used by ota_client to fetch files from the remote ota server.
         metadata: metadata of the requested ota image.
         url_base: base url that ota image located.
-        mount_point: the destination of new created bank.
+        new_root: the root folder of bank to be updated.
+        old_root: the root folder of old bank.
     """
 
     cookies: ClassVar[Dict[str, Any]]
     metadata: ClassVar[OtaMetadata]
     url_base: ClassVar[str]
-    mount_point: ClassVar[str]
+    new_root: ClassVar[str]
+    boot_dir: ClassVar[str]
+    old_root: ClassVar[str]
+    stats_tracker: ClassVar
+    status_updator: ClassVar[Callable]
 
     def create_standby_bank(self):
         ...
 
 
-__All__ = ("LegacyMode",)
+def get_bank_creator(mode: str) -> Type[StandByBankCreatorProtocol]:
+    logger.info(f"use slot update {mode=}")
+    if mode == "legacy":
+        from app.create_bank._legacy_mode import LegacyMode
+
+        return LegacyMode
+    elif mode == "rebuild":
+        from app.create_bank._rebuild_mode import RebuildMode
+
+        return RebuildMode
+    else:
+        raise NotImplementedError(f"slot update {mode=} not implemented")
+
+
+StandByBankCreator: Type[StandByBankCreatorProtocol] = get_bank_creator(
+    cfg.SLOT_UPDATE_MODE
+)
+
+__All__ = ("StandByBankCreator",)
