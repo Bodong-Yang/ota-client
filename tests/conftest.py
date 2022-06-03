@@ -90,6 +90,15 @@ class MockedCfgBundle(NamedTuple):
     proxy_info: ProxyInfo
 
 
+# temporary fix for generated pb2 files
+@pytest.fixture(autouse=True, scope="session")
+def _load_path():
+    import sys
+
+    _base_dir = Path(__file__).absolute().parent.parent
+    sys.path.extend([str(_base_dir), str(_base_dir / "app")])
+
+
 @pytest.fixture
 def proxy_cfg(tmp_path: Path):
     """Standalone default proxy_info."""
