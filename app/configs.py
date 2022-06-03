@@ -105,7 +105,9 @@ class _BaseConfig:
     STATS_COLLECT_INTERVAL: int = 1 # second
 
     # create bank mechanism
-    SLOT_UPDATE_MODE: Literal['legacy', 'rebuild', 'in_place'] = "legacy"
+    SLOT_UPDATE_MODE: Literal['legacy', 'rebuild', 'in_place', 'auto'] = "legacy"
+    OTA_TMP_STORE: str = "/var/tmp/ota-tmp"
+    META_FOLDER: str = "/opt/ota/image-meta"
 
 
 @dataclass

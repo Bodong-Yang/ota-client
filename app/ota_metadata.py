@@ -8,7 +8,7 @@ from OpenSSL import crypto
 from pathlib import Path
 from pprint import pformat
 from functools import partial
-from typing import ClassVar, Optional
+from typing import ClassVar, Optional, Union
 
 from app.ota_error import OtaErrorRecoverable
 from app.configs import config as cfg
@@ -272,8 +272,8 @@ class DirectoryInf(_BaseInf):
 
         del self._left
 
-    def mkdir2bank(self, dst_root: Path, *, src_root: Path):
-        _target = dst_root / self.path.relative_to(src_root)
+    def mkdir2bank(self, dst_root: Path):
+        _target = dst_root / self.path.relative_to("/")
         _target.mkdir(parents=True, exist_ok=True)
         os.chmod(_target, self.mode)
         os.chown(_target, self.uid, self.gid)
@@ -304,11 +304,11 @@ class SymbolicLinkInf(_BaseInf):
 
         del self._left
 
-    def symlink2bank(self, dst_root: Path, *, src_root: Path):
+    def link_at_bank(self, dst_root: Path):
         if Path("/boot") in self.slink.parents:
             raise ValueError("symbolic link in /boot directory is not supported")
 
-        _target = dst_root / self.slink.relative_to(src_root)
+        _target = dst_root / self.slink.relative_to("/")
         _target.symlink_to(self.srcpath)
         # set the permission on the file itself
         os.chmod(_target, self.mode, follow_symlinks=False)
@@ -370,8 +370,11 @@ class RegularInf:
             # as un-existed inode will be matched to None
             self.inode = _ma.group("inode")
 
-    def relative_to(self, root: Path) -> Path:
+    def relative_to(self, root: Union[Path, str]) -> Path:
         return self.path.relative_to(root)
+
+    def change_root(self, old_root: Union[Path, str], new_root: Path) -> Path:
+        return Path(new_root) / self.relative_to(old_root)
 
     def verify_file(self, *, src_root: Path) -> bool:
         _src = src_root / self.path.relative_to("/")

@@ -11,7 +11,7 @@ from typing import Any, Dict, Tuple
 from urllib.parse import urlparse
 
 from app.copy_tree import CopyTree
-from app.create_bank import StandByBankCreator
+from app.create_bank import StandByBankCreator, get_reference_bank
 from app.downloader import Downloader
 from app.ota_update_phase import OtaClientUpdatePhase
 from app.interface import OtaClientInterface
@@ -378,7 +378,10 @@ class _BaseOtaClient(OtaStatusControlMixin, OtaClientInterface):
             cookies=cookies,
             metadata=metadata,
             url_base=url,
-            mount_point=str(self._mount_point),
+            new_root=str(self._mount_point),
+            reference_root=get_reference_bank(
+                cur_bank="/", standby_bank=str(self._mount_point)
+            ),
             boot_dir=str(self.get_standby_boot_partition_path()),
             stats_tracker=self._statistics,
             status_updator=_update_phase,

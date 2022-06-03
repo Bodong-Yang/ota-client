@@ -1,4 +1,5 @@
 import itertools
+import shutil
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, wait as concurrent_futures_wait
@@ -35,6 +36,8 @@ logger = log_util.get_logger(
 class RebuildMode:
     MAX_CONCURRENT_DOWNLOAD = cfg.MAX_CONCURRENT_DOWNLOAD
     MAX_CONCURRENT_TASKS = cfg.MAX_CONCURRENT_TASKS
+    OTA_TMP_STORE = cfg.OTA_TMP_STORE
+    META_FOLDER = cfg.META_FOLDER
     META_FILES: ClassVar[Dict[str, str]] = {
         "dirs.txt": "get_directories_info",
         "regulars.txt": "get_regulars_info",
@@ -48,19 +51,19 @@ class RebuildMode:
         cookies: Dict[str, Any],
         metadata: OtaMetadata,
         url_base: str,
-        mount_point: str,
+        new_root: str,
+        reference_root: str,
         boot_dir: str,
         stats_tracker: OtaClientStatistics,
         status_updator: Callable,
-        old_bank_root: str,
     ) -> None:
         from app.proxy_info import proxy_cfg
 
         self.cookies = cookies
         self.metadata = metadata
         self.url_base = url_base
-        self.old_bank_root = Path(old_bank_root)  # TODO: old bank
-        self.new_bank_root = Path(mount_point)
+        self.reference_root = Path(reference_root)
+        self.new_root = Path(new_root)
         self.boot_dir = Path(boot_dir)
         self.stats_tracker = stats_tracker
         self.status_update: Callable = status_updator
@@ -69,11 +72,8 @@ class RebuildMode:
         self.image_base_url = urljoin(url_base, f"{self.image_base_dir}/")
 
         # temp storage
-        # TODO: considering cross reboot persistent of /tmp/store
-        # TODO: reused if update interrupted, unconditionally
-        self._meta_folder: Path = None  # TODO: configured by cfg
-        self._tmp_store = Path("/var/tmp/ota-tmp")  # TODO: configured by cfg
-        self._tmp_folder = Path(self._tmp_store.name)
+        self._tmp_storage = tempfile.TemporaryDirectory(dir=cfg.OTA_TMP_STORE)
+        self._tmp_folder = Path(self._tmp_storage.name)
 
         # configure the downloader
         self._downloader = Downloader()
@@ -87,7 +87,7 @@ class RebuildMode:
             list_info = getattr(self.metadata, method)()
             self._downloader.download(
                 path=list_info["file"],
-                dst=self._meta_folder / fname,
+                dst=self._tmp_folder / fname,
                 digest=list_info["hash"],
                 url_base=self.url_base,
                 cookies=self.cookies,
@@ -96,11 +96,11 @@ class RebuildMode:
                 },
             )
 
-        # TODO: hardcoded old_reg location
+        # TODO: hardcoded regulars.txt
         delta_calculator = DeltaGenerator(
-            old_reg="/opt/ota/image_meta/regulars.txt",
-            new_reg=self._meta_folder / "regulars.txt",
-            bank_root=self.old_bank_root,
+            old_reg=Path(self.META_FOLDER) / "regulars.txt",
+            new_reg=self._tmp_folder / "regulars.txt",
+            bank_root=self.reference_root,
         )
 
         (
@@ -120,11 +120,11 @@ class RebuildMode:
         _copy_tree = CopyTree(
             src_passwd_file=_passwd_file,
             src_group_file=_group_file,
-            dst_passwd_file=self.new_bank_root / _passwd_file.relative_to("/"),
-            dst_group_file=self.new_bank_root / _group_file.relative_to("/"),
+            dst_passwd_file=self.new_root / _passwd_file.relative_to("/"),
+            dst_group_file=self.new_root / _group_file.relative_to("/"),
         )
 
-        with open(self._meta_folder / "persistents.txt", "r") as f:
+        with open(self._tmp_folder / "persistents.txt", "r") as f:
             for l in f:
                 perinf = PersistentInf(l)
                 if (
@@ -132,20 +132,27 @@ class RebuildMode:
                     or perinf.path.is_dir()
                     or perinf.path.is_symlink()
                 ):  # NOTE: not equivalent to perinf.path.exists()
-                    _copy_tree.copy_with_parents(perinf.path, self.new_bank_root)
+                    _copy_tree.copy_with_parents(perinf.path, self.new_root)
 
     def _process_dirs(self):
         self.status_update(OtaClientUpdatePhase.DIRECTORY)
-        with open(self._meta_folder / "dirs.txt", "r") as f:
+        with open(self._tmp_folder / "dirs.txt", "r") as f:
             for l in f:
-                DirectoryInf(l).mkdir2bank(self.new_bank_root)
+                DirectoryInf(l).mkdir2bank(self.new_root)
 
-        # TODO: save metadata to /opt/ota/image_meta
+    def _save_meta(self):
+        """Save metadata to META_FOLDER."""
+        _dst = Path(self.META_FOLDER)
+        _dst.mkdir(parents=True, exist_ok=True)
+
+        for fname, _ in self.META_FILES:
+            _src = self._tmp_folder / fname
+            shutil.copy(_src, _dst)
 
     def _process_symlinks(self):
-        with open(self._meta_folder / "symlinks.txt", "r") as f:
+        with open(self._tmp_folder / "symlinks.txt", "r") as f:
             for l in f:
-                SymbolicLinkInf(l).symlink2bank(self.new_bank_root)
+                SymbolicLinkInf(l).link_at_bank(self.new_root)
 
     def _process_regulars(self):
         self.status_update(OtaClientUpdatePhase.REGULAR)
@@ -166,7 +173,7 @@ class RebuildMode:
                     pool.submit(
                         _pathset.collect_entries_to_be_recycled,
                         dst=self._tmp_folder,
-                        root=self.old_bank_root,
+                        root=self.reference_root,
                     )
                 )
 
@@ -205,8 +212,7 @@ class RebuildMode:
                     if _collected_entry is None:
                         raise FileNotFoundError
 
-                    # copy from the current bank
-                    _collected_entry.copy2dst(_first_copy, src_root=self.old_bank_root)
+                    _collected_entry.copy2dst(_first_copy, src_root=self.reference_root)
                     _stat.op = "copy"
                 except FileNotFoundError:  # fallback to download from remote
                     _stat.op = "download"
@@ -221,7 +227,7 @@ class RebuildMode:
 
             # special treatment on /boot folder
             _mount_point = (
-                self.new_bank_root
+                self.new_root
                 if not str(entry.path).startswith("/boot")
                 else self.boot_dir
             )
@@ -262,8 +268,12 @@ class RebuildMode:
         # TODO: erase bank on create_standby_bank
         self._prepare_meta_files()  # download meta and calculate
         self._process_dirs()
+        self._save_meta()
         self._process_regulars()
         self._process_symlinks()
         self._process_persistents()
 
-        # TODO: cleanup the the tmp folder
+        try:
+            self._tmp_storage.cleanup()  # finally cleanup
+        except Exception:
+            logger.error(f"failed to cleanup tmp storage: {self._tmp_folder}")

@@ -47,7 +47,8 @@ class LegacyMode:
         cookies: Dict[str, Any],
         metadata: OtaMetadata,
         url_base: str,
-        mount_point: str,
+        new_root: str,
+        reference_root: str,
         boot_dir: str,
         stats_tracker: OtaClientStatistics,
         status_updator: Callable,
@@ -55,8 +56,9 @@ class LegacyMode:
         self.cookies = cookies
         self.metadata = metadata
         self.url_base = url_base
-        self.mount_point = Path(mount_point)
+        self.new_root = Path(new_root)
         self.boot_dir = Path(boot_dir)
+        self.reference_root = Path(reference_root)
         self.stats_tracker = stats_tracker
         self.status_update: Callable = status_updator
         # the location of image at the ota server root
@@ -93,9 +95,7 @@ class LegacyMode:
             with open(f.name, "r") as dir_txt:
                 for line in dir_txt:
                     dirinf = DirectoryInf(line)
-                    target_path = self.mount_point.joinpath(
-                        dirinf.path.relative_to("/")
-                    )
+                    target_path = self.new_root.joinpath(dirinf.path.relative_to("/"))
 
                     target_path.mkdir(mode=dirinf.mode, parents=True, exist_ok=True)
                     os.chown(target_path, dirinf.uid, dirinf.gid)
@@ -120,7 +120,7 @@ class LegacyMode:
                 for line in symlink_txt:
                     # NOTE: symbolic link in /boot directory is not supported. We don't use it.
                     slinkf = SymbolicLinkInf(line)
-                    slink = self.mount_point.joinpath(slinkf.slink.relative_to("/"))
+                    slink = self.new_root.joinpath(slinkf.slink.relative_to("/"))
                     slink.symlink_to(slinkf.srcpath)
                     os.chown(slink, slinkf.uid, slinkf.gid, follow_symlinks=False)
 
@@ -160,8 +160,8 @@ class LegacyMode:
             copy_tree = CopyTree(
                 src_passwd_file=self._passwd_file,
                 src_group_file=self._group_file,
-                dst_passwd_file=self.mount_point / self._passwd_file.relative_to("/"),
-                dst_group_file=self.mount_point / self._group_file.relative_to("/"),
+                dst_passwd_file=self.new_root / self._passwd_file.relative_to("/"),
+                dst_group_file=self.new_root / self._group_file.relative_to("/"),
             )
 
             with open(f.name, "r") as persist_txt:
@@ -172,17 +172,9 @@ class LegacyMode:
                         or perinf.path.is_dir()
                         or perinf.path.is_symlink()
                     ):  # NOTE: not equivalent to perinf.path.exists()
-                        copy_tree.copy_with_parents(perinf.path, self.mount_point)
+                        copy_tree.copy_with_parents(perinf.path, self.new_root)
 
-    def _create_regular_file(
-        self,
-        reginf: RegularInf,
-        *,
-        standby_path: Path,
-        boot_standby_path: Path,
-        hardlink_register: HardlinkRegister,
-        download_limiter: Semaphore,
-    ) -> List[RegularStats]:
+    def _create_regular_file(self, reginf: RegularInf) -> List[RegularStats]:
         # thread_time for multithreading function
         # NOTE: for multithreading implementation,
         # when a thread is sleeping, the GIL will be released
@@ -192,9 +184,9 @@ class LegacyMode:
 
         processed = RegularStats()
         if str(reginf.path).startswith("/boot"):
-            dst = boot_standby_path / reginf.path.relative_to("/boot")
+            dst = self.boot_dir / reginf.path.relative_to("/boot")
         else:
-            dst = standby_path / reginf.path.relative_to("/")
+            dst = self.new_root / reginf.path.relative_to("/")
 
         # if is_hardlink file, get a tracker from the register
         is_hardlink = reginf.nlink >= 2
@@ -206,7 +198,7 @@ class LegacyMode:
             if reginf.inode:
                 _identifier = reginf.inode
 
-            _hardlink_tracker, _is_writer = hardlink_register.get_tracker(
+            _hardlink_tracker, _is_writer = self._hardlink_register.get_tracker(
                 _identifier, reginf.path, reginf.nlink
             )
 
@@ -214,21 +206,21 @@ class LegacyMode:
         if is_hardlink and not _is_writer:
             # wait until the first copy is ready
             prev_reginf_path = _hardlink_tracker.subscribe()
-            (standby_path / prev_reginf_path.relative_to("/")).link_to(dst)
+            (self.new_root / prev_reginf_path.relative_to("/")).link_to(dst)
             processed.op = "link"
 
         # case 2: normal file or first copy of hardlink file
         else:
             try:
-                if reginf.path.is_file() and verify_file(
-                    reginf.path, reginf.sha256hash, reginf.size
+                if reginf.path.is_file() and reginf.verify_file(
+                    src_root=self.reference_root
                 ):
                     # copy file from active bank if hash is the same
-                    shutil.copy(reginf.path, dst)
+                    reginf.copy2bank(self.new_root, src_root=self.reference_root)
                     processed.op = "copy"
                 else:
                     # limit the concurrent downloading tasks
-                    with download_limiter:
+                    with self._download_se:
                         processed.errors = self._downloader.download(
                             reginf.path,
                             dst,
@@ -268,7 +260,7 @@ class LegacyMode:
         # NOTE: check _OtaStatisticsStorage for available attributes
         self.stats_tracker.set("total_regular_files", total_files_num)
 
-        _hardlink_register = HardlinkRegister()
+        self._hardlink_register = HardlinkRegister()
         # collector that records stats from tasks and update ota-update status
         _collector = CreateRegularStatsCollector(
             self.stats_tracker,
@@ -276,7 +268,7 @@ class LegacyMode:
             max_concurrency_tasks=self.MAX_CONCURRENT_TASKS,
         )
         # limit the cocurrent downloading tasks
-        _download_se = Semaphore(self.MAX_CONCURRENT_DOWNLOAD)
+        self._download_se = Semaphore(self.MAX_CONCURRENT_DOWNLOAD)
 
         with open(regulars_file, "r") as f, ThreadPoolExecutor() as pool:
             # fire up background collector
@@ -289,10 +281,6 @@ class LegacyMode:
                 fut = pool.submit(
                     self._create_regular_file,
                     entry,
-                    standby_path=self.mount_point,
-                    boot_standby_path=self.boot_dir,
-                    hardlink_register=_hardlink_register,
-                    download_limiter=_download_se,
                 )
                 fut.add_done_callback(_collector.callback)
 

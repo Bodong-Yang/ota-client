@@ -16,7 +16,9 @@ class StandByBankCreatorProtocol(Protocol):
         metadata: metadata of the requested ota image.
         url_base: base url that ota image located.
         new_root: the root folder of bank to be updated.
-        old_root: the root folder of old bank.
+        reference_root: the root folder to copy from.
+        status_tracker: pass real-time update stats to ota-client.
+        status_updator: inform which ota phase now.
     """
 
     cookies: ClassVar[Dict[str, Any]]
@@ -24,7 +26,7 @@ class StandByBankCreatorProtocol(Protocol):
     url_base: ClassVar[str]
     new_root: ClassVar[str]
     boot_dir: ClassVar[str]
-    old_root: ClassVar[str]
+    reference_root: ClassVar[str]
     stats_tracker: ClassVar
     status_updator: ClassVar[Callable]
 
@@ -32,7 +34,16 @@ class StandByBankCreatorProtocol(Protocol):
         ...
 
 
-def get_bank_creator(mode: str) -> Type[StandByBankCreatorProtocol]:
+def select_mode() -> str:
+    """
+    TODO: select mode mechanism
+    """
+    return cfg.SLOT_UPDATE_MODE
+
+
+def get_bank_creator() -> Type[StandByBankCreatorProtocol]:
+    mode = select_mode()
+
     logger.info(f"use slot update {mode=}")
     if mode == "legacy":
         from app.create_bank._legacy_mode import LegacyMode
@@ -46,8 +57,17 @@ def get_bank_creator(mode: str) -> Type[StandByBankCreatorProtocol]:
         raise NotImplementedError(f"slot update {mode=} not implemented")
 
 
-StandByBankCreator: Type[StandByBankCreatorProtocol] = get_bank_creator(
-    cfg.SLOT_UPDATE_MODE
-)
+def get_reference_bank(*, cur_bank: str, standby_bank: str):
+    mode = select_mode()
+    """Get the bank to copy from."""
+    if mode in ("legacy", "rebuild"):
+        return cur_bank
+    elif mode in ("in_place"):
+        return standby_bank
+    else:
+        raise NotImplementedError(f"slot update {mode=} not implemented")
 
-__All__ = ("StandByBankCreator",)
+
+StandByBankCreator: Type[StandByBankCreatorProtocol] = get_bank_creator()
+
+__All__ = ("StandByBankCreator", "get_reference_bank", "get_bank_creator")
