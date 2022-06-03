@@ -182,7 +182,7 @@ class LegacyMode:
         boot_standby_path: Path,
         hardlink_register: HardlinkRegister,
         download_limiter: Semaphore,
-    ) -> RegularStats:
+    ) -> List[RegularStats]:
         # thread_time for multithreading function
         # NOTE: for multithreading implementation,
         # when a thread is sleeping, the GIL will be released
@@ -258,7 +258,7 @@ class LegacyMode:
 
         processed.elapsed = time.thread_time() - begin_time
 
-        return processed
+        return [processed]
 
     def _create_regular_files(self, regulars_file: str):
         # get total number of regular_files
