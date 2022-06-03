@@ -8,7 +8,7 @@ from pytest_mock import MockerFixture
 
 @pytest.fixture
 def mocked_update():
-    from ota_client import OtaClientFailureType, OtaStateSync
+    from app.ota_client import OtaClientFailureType, OtaStateSync
 
     def _update(*args, fsm: OtaStateSync):
         """simulate the state changes in ota_client update"""
@@ -25,20 +25,20 @@ def mocked_update():
 
 @pytest.fixture
 def start_service_with_ota_client_mock(mocker: MockerFixture, proxy_cfg, mocked_update):
-    from ota_client_service import (
+    from app.ota_client_service import (
         OtaClientServiceV2,
         service_start,
         service_stop,
     )
-    from ota_client_stub import OtaClientStub
-    from ota_client import OtaClient
-    import otaclient_v2_pb2_grpc as v2_grpc
+    from app.ota_client_stub import OtaClientStub
+    from app.ota_client import OtaClient
+    import app.otaclient_v2_pb2_grpc as v2_grpc
 
     ota_client_mock = mocker.Mock(spec=OtaClient)
     ota_client_mock.update.side_effect = mocked_update
 
-    mocker.patch("ota_client_stub.OtaClient", return_value=ota_client_mock)
-    mocker.patch("ota_client_stub.proxy_cfg", proxy_cfg)
+    mocker.patch("app.ota_client_stub.OtaClient", return_value=ota_client_mock)
+    mocker.patch("app.ota_client_stub.proxy_cfg", proxy_cfg)
 
     ota_client_stub = OtaClientStub()
     mocker.patch.object(ota_client_stub, "_ensure_subecu_status")
@@ -58,8 +58,8 @@ def start_service_with_ota_client_mock(mocker: MockerFixture, proxy_cfg, mocked_
 
 
 def test_ota_client_service_update(mocker, start_service_with_ota_client_mock):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
 
     ota_client_mock, _ = start_service_with_ota_client_mock
 
@@ -85,9 +85,9 @@ def test_ota_client_service_update(mocker, start_service_with_ota_client_mock):
 
 
 def test_ota_client_service_rollback(mocker, start_service_with_ota_client_mock):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
-    from ota_client import OtaClientFailureType
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
+    from app.ota_client import OtaClientFailureType
 
     ota_client_mock, _ = start_service_with_ota_client_mock
     ota_client_mock.rollback.return_value = OtaClientFailureType.NO_FAILURE
@@ -109,9 +109,9 @@ def test_ota_client_service_rollback(mocker, start_service_with_ota_client_mock)
 
 
 def test_ota_client_service_status(mocker, start_service_with_ota_client_mock):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
-    from ota_client import OtaClientFailureType
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
+    from app.ota_client import OtaClientFailureType
 
     ota_client_mock, _ = start_service_with_ota_client_mock
     status = {
@@ -182,9 +182,8 @@ def test_ota_client_service_status(mocker, start_service_with_ota_client_mock):
 def test_ota_client_service_update_with_secondary(
     mocker, start_service_with_ota_client_mock
 ):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
-    from ota_client import OtaClientFailureType
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
 
     ota_client_mock, ota_client_stub = start_service_with_ota_client_mock
 
@@ -237,9 +236,9 @@ def test_ota_client_service_update_with_secondary(
 def test_ota_client_service_rollback_with_secondary(
     mocker, start_service_with_ota_client_mock
 ):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
-    from ota_client import OtaClientFailureType
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
+    from app.ota_client import OtaClientFailureType
 
     ota_client_mock, ota_client_stub = start_service_with_ota_client_mock
     ota_client_mock.rollback.return_value = OtaClientFailureType.NO_FAILURE
@@ -285,9 +284,9 @@ def test_ota_client_service_rollback_with_secondary(
 def test_ota_client_service_status_with_secondary(
     mocker, start_service_with_ota_client_mock
 ):
-    import otaclient_v2_pb2 as v2
-    import otaclient_v2_pb2_grpc as v2_grpc
-    from ota_client import OtaClientFailureType
+    import app.otaclient_v2_pb2 as v2
+    import app.otaclient_v2_pb2_grpc as v2_grpc
+    from app.ota_client import OtaClientFailureType
 
     ota_client_mock, ota_client_stub = start_service_with_ota_client_mock
     status = {

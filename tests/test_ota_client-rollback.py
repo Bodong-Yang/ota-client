@@ -61,11 +61,11 @@ GRUB_CMDLINE_LINUX=""
 
 
 def test_ota_client_rollabck(mocker, tmp_path):
-    import ota_client
-    from configs import config as cfg
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from ota_status import OtaStatus
-    from grub_control import GrubControl
+    from app import ota_client
+    from app.configs import config as cfg
+    from app.grub_ota_partition import OtaPartition, OtaPartitionFile
+    from app.ota_status import OtaStatus
+    from app.grub_control import GrubControl
 
     """
     tmp_path/boot
@@ -169,11 +169,11 @@ def test_ota_client_rollabck(mocker, tmp_path):
 
 
 def test_ota_client_rollback_post_process(mocker, tmp_path):
-    import ota_client
-    from configs import config as cfg
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from ota_status import OtaStatus
-    from grub_control import GrubControl
+    from app import ota_client
+    from app.configs import config as cfg
+    from app.grub_ota_partition import OtaPartition, OtaPartitionFile
+    from app.ota_status import OtaStatus
+    from app.grub_control import GrubControl
 
     """
     tmp_path/boot
@@ -251,10 +251,8 @@ def test_ota_client_rollback_post_process(mocker, tmp_path):
     cmdline = "BOOT_IMAGE=/vmlinuz-5.4.0-73-generic root=UUID=01234567-0123-0123-0123-0123456789ab ro maybe-ubiquity"
 
     mocker.patch.object(GrubControl, "_get_cmdline", return_value=cmdline)
-    reboot_mock = mocker.patch.object(GrubControl, "reboot", return_value=0)
-    _grub_reboot_mock = mocker.patch.object(
-        GrubControl, "_grub_reboot_cmd", return_value=0
-    )
+    mocker.patch.object(GrubControl, "reboot", return_value=0)
+    mocker.patch.object(GrubControl, "_grub_reboot_cmd", return_value=0)
     # NOTE:
     # basically patch to _count_menuentry is not required if
     # mock__grub_mkconfig_cmd is more sophisticated.

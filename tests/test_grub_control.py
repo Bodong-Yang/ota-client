@@ -1,4 +1,3 @@
-import os
 import pytest
 
 FSTAB_DEV_DISK_BY_UUID = """\
@@ -83,7 +82,7 @@ tmpfs /media/autoware/ROSBAG tmpfs rw,nosuid,nodev,noexec,nofail,size=10G,mode=1
 def test_grub_control_update_fstab(
     mocker, tmp_path, fstab_active, fstab_standby, fstab_merged
 ):
-    from grub_control import GrubControl
+    from app.grub_control import GrubControl
 
     mount_dir = tmp_path / "mnt"
     mount_dir.mkdir()

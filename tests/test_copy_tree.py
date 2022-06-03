@@ -1,7 +1,5 @@
 import os
 import stat
-import pytest
-from pathlib import Path
 
 
 def create_files(tmp_path):
@@ -276,7 +274,7 @@ crontab:x:2105:
 
 
 def test_copy_tree_src_dir(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,
@@ -359,7 +357,7 @@ def test_copy_tree_src_dir(mocker, tmp_path):
 
 
 def test_copy_tree_src_file(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,
@@ -433,7 +431,7 @@ def test_copy_tree_src_file(mocker, tmp_path):
 
 
 def test_copy_tree_B_exists(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,
@@ -462,7 +460,7 @@ def test_copy_tree_B_exists(mocker, tmp_path):
     os.chown(dst_B, 1, 2, follow_symlinks=False)
     os.chmod(dst_A, 0o765)
     os.chmod(dst_B, 0o654)
-    st = os.stat(dst_A, follow_symlinks=False)
+    os.stat(dst_A, follow_symlinks=False)
 
     (
         src_passwd_file,
@@ -523,7 +521,7 @@ def test_copy_tree_B_exists(mocker, tmp_path):
 
 
 def test_copy_tree_with_symlink_overwrite(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,
@@ -572,7 +570,7 @@ def test_copy_tree_with_symlink_overwrite(mocker, tmp_path):
 
 
 def test_copy_tree_src_dir_dst_file(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,
@@ -662,7 +660,7 @@ def test_copy_tree_src_dir_dst_file(mocker, tmp_path):
 
 
 def test_copy_tree_src_file_dst_dir(mocker, tmp_path):
-    from copy_tree import CopyTree
+    from app.copy_tree import CopyTree
 
     (
         dst,

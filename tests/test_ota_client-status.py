@@ -1,4 +1,3 @@
-import os
 import pytest
 from pathlib import Path
 
@@ -6,9 +5,9 @@ test_dir = Path(__file__).parent
 
 
 def test_ota_client_status(mocker, tmp_path):
-    import ota_client
-    from ota_client import OtaClientFailureType
-    from grub_ota_partition import OtaPartition
+    from app import ota_client
+    from app.ota_client import OtaClientFailureType
+    from app.grub_ota_partition import OtaPartition
 
     """
     tmp_path/boot

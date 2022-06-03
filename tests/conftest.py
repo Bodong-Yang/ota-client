@@ -2,8 +2,8 @@ import pytest
 from pathlib import Path
 from typing import NamedTuple
 
-from configs import GrubControlConfig
-from proxy_info import ProxyInfo
+from app.configs import GrubControlConfig
+from app.proxy_info import ProxyInfo
 
 test_dir = Path(__file__).parent
 
@@ -93,7 +93,7 @@ class MockedCfgBundle(NamedTuple):
 @pytest.fixture
 def proxy_cfg(tmp_path: Path):
     """Standalone default proxy_info."""
-    import proxy_info
+    from app import proxy_info
 
     _proxy_cfg_f = tmp_path / "default_proxy_info.yaml"
     _proxy_cfg_f.write_text(DEFUALT_PROXY_INFO)

@@ -47,7 +47,7 @@ def setup_test(tmp_path: Path):
         /dev/sdx3 / (UUID: 01234567-0123-0123-0123-0123456789ab)
         /dev/sdx4 (unmounted) (UUID: 76543210-3210-3210-3210-ba9876543210)
     """
-    from configs import create_config
+    from app.configs import create_config
     import app.proxy_info as proxy_info
 
     ###### environment setup ######
@@ -135,9 +135,9 @@ def mocked_ota_client_mod(
 ):
     """Mocked ota_client module that configured by setup_test."""
 
-    import ota_client
-    from grub_ota_partition import OtaPartition, OtaPartitionFile
-    from grub_control import GrubControl
+    from app import ota_client
+    from app.grub_ota_partition import OtaPartition, OtaPartitionFile
+    from app.grub_control import GrubControl
     import app.create_bank._legacy_mode as legacy_mode
 
     ###### load cfgs ######
@@ -204,8 +204,8 @@ def test_ota_client_update(
     setup_test: MockedCfgBundle,
     tmp_path: Path,
 ):
-    from ota_client import OtaClientFailureType, OtaStateSync
-    from ota_status import OtaStatus
+    from app.ota_client import OtaClientFailureType, OtaStateSync
+    from app.ota_status import OtaStatus
 
     ####### preload cfgs ######
     _cfg, _ = setup_test
@@ -314,7 +314,7 @@ def test_ota_client_update(
 
 
 def test_ota_client_update_multiple_call(mocked_ota_client_mod):
-    from ota_client import OtaClientFailureType, OtaStateSync
+    from app.ota_client import OtaClientFailureType, OtaStateSync
 
     ###### test settings ######
     target_version = "123.x"
@@ -446,8 +446,8 @@ def test_ota_client_update_regular_download_error(
     error_injection,
     failure_reason_has,
 ):
-    from ota_client import OtaClientFailureType, OtaStateSync
-    from ota_status import OtaStatus
+    from app.ota_client import OtaClientFailureType, OtaStateSync
+    from app.ota_status import OtaStatus
 
     # preload
     _cfg, _ = setup_test
@@ -523,9 +523,9 @@ def test_ota_client_update_with_initialize_boot_partition(
     mocker: MockerFixture,
     tmp_path: Path,
 ):
-    from ota_client import OtaStateSync
-    from ota_status import OtaStatus
-    from grub_control import GrubControl
+    from app.ota_client import OtaStateSync
+    from app.ota_status import OtaStatus
+    from app.grub_control import GrubControl
 
     ###### preload cfgs ######
     _cfg, _ = setup_test
@@ -640,8 +640,8 @@ def test_ota_client_update_post_process(
     setup_test: MockedCfgBundle,
     mocker: MockerFixture,
 ):
-    from grub_ota_partition import OtaPartition
-    from ota_status import OtaStatus
+    from app.grub_ota_partition import OtaPartition
+    from app.ota_status import OtaStatus
 
     ####### preload cfgs ######
     _cfg, _ = setup_test
