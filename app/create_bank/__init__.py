@@ -3,6 +3,7 @@ from typing import Any, Callable, ClassVar, Dict, Protocol, Type
 from app.ota_metadata import OtaMetadata
 from app.configs import config as cfg
 from app import log_util
+from app.update_stats import OtaClientStatistics
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
@@ -27,7 +28,7 @@ class StandByBankCreatorProtocol(Protocol):
     new_root: ClassVar[str]
     boot_dir: ClassVar[str]
     reference_root: ClassVar[str]
-    stats_tracker: ClassVar
+    stats_tracker: ClassVar[OtaClientStatistics]
     status_updator: ClassVar[Callable]
 
     def create_standby_bank(self):

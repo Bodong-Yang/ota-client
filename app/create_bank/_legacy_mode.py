@@ -1,5 +1,4 @@
 import os
-import shutil
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -8,12 +7,11 @@ from threading import Semaphore
 from typing import Any, Callable, Dict, List
 from urllib.parse import urljoin
 
-from app._common import verify_file
 from app.configs import OTAFileCacheControl, config as cfg
 from app.copy_tree import CopyTree
 from app.downloader import Downloader
-from app.ota_update_stats import OtaClientStatistics
-from app.ota_update_phase import OtaClientUpdatePhase
+from app.update_stats import OtaClientStatistics
+from app.update_phase import OtaClientUpdatePhase
 from app.ota_metadata import (
     DirectoryInf,
     OtaMetadata,

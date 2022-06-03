@@ -17,8 +17,8 @@ from app.create_bank._common import (
 )
 from app.configs import OTAFileCacheControl, config as cfg
 from app.downloader import Downloader
-from app.ota_update_stats import OtaClientStatistics
-from app.ota_update_phase import OtaClientUpdatePhase
+from app.update_stats import OtaClientStatistics
+from app.update_phase import OtaClientUpdatePhase
 from app.ota_metadata import (
     DirectoryInf,
     OtaMetadata,
