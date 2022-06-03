@@ -3,9 +3,9 @@
 import abc
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Protocol
 
-from ota_status import OtaStatus
+from app.ota_status import OtaStatus
 
 
 class BootControlInterface(metaclass=abc.ABCMeta):
@@ -35,5 +35,15 @@ class OtaClientInterface(metaclass=abc.ABCMeta):
 
     def rollback(self) -> Any: ...
     def status(self) -> Any: ...
+
+class OtaClientProtocol(Protocol):
+    def update(
+        self, 
+        version, url_base, cookies_json: str, 
+        *, 
+        pre_update_event: Event = None, post_update_event: Event = None) -> Any: ...
+
+    def rollback(self) -> Any: ...
+    def status(self) -> Any: ...    
 
 # fmt: on

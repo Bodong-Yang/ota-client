@@ -5,17 +5,17 @@ import subprocess
 from pathlib import Path
 from functools import partial
 
-import log_util
-from _common import (
+from app import log_util
+from app._common import (
     subprocess_call,
     subprocess_check_output,
     read_from_file,
     write_to_file,
 )
-from configs import config as cfg
-from ota_error import OtaErrorRecoverable, OtaErrorUnrecoverable
-from ota_status import OtaStatus
-from ota_client_interface import BootControlInterface
+from app.configs import config as cfg
+from app.ota_error import OtaErrorRecoverable, OtaErrorUnrecoverable
+from app.ota_status import OtaStatus
+from app.interface import BootControlInterface
 
 assert cfg.BOOTLOADER == "cboot"
 

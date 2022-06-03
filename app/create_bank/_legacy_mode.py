@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Semaphore
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List
 from urllib.parse import urljoin
 
 from app._common import verify_file
@@ -29,7 +29,7 @@ from app.create_bank._common import (
     CreateRegularStatsCollector,
 )
 
-import log_util
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)

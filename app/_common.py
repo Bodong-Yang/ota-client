@@ -3,22 +3,20 @@ import shlex
 import subprocess
 from hashlib import sha256
 from pathlib import Path
+from typing import Union
 
-import log_util
-from configs import config as cfg
+from app.log_util import get_logger
+from app.configs import config as cfg
 
-logger = log_util.get_logger(
-    __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
-)
+logger = get_logger(__name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL))
 
 # file verification
-def file_sha256(filename: Path) -> str:
-    ONE_MB = 1048576
+def file_sha256(filename: Union[str, str]) -> str:
     with open(filename, "rb") as f:
         m = sha256()
         while True:
-            d = f.read(ONE_MB)
-            if d == b"":
+            d = f.read(cfg.LOCAL_CHUNK_SIZE)
+            if len(d) == 0:
                 break
             m.update(d)
         return m.hexdigest()

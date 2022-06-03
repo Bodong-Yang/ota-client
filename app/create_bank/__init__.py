@@ -1,7 +1,12 @@
-from typing import Any, ClassVar, Dict, Protocol
+from typing import Any, Callable, ClassVar, Dict, Protocol, Type
 
 from app.ota_metadata import OtaMetadata
-from app.create_bank._legacy_mode import LegacyMode
+from app.configs import config as cfg
+from app import log_util
+
+logger = log_util.get_logger(
+    __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
+)
 
 
 class StandByBankCreatorProtocol(Protocol):

@@ -1,7 +1,7 @@
 import yaml
 
-from configs import config as cfg
-import log_util
+from app.configs import config as cfg
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)

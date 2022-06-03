@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Dict, Union
 from urllib.parse import quote_from_bytes, urljoin, urlparse
 
-from configs import OTAFileCacheControl, config as cfg
-from ota_error import OtaErrorRecoverable
+from app.configs import OTAFileCacheControl, config as cfg
+from app.ota_error import OtaErrorRecoverable
 
-import log_util
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)

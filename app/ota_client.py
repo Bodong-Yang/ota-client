@@ -9,18 +9,18 @@ from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Dict, Tuple
 from urllib.parse import urlparse
-from copy_tree import CopyTree
-from downloader import Downloader
 
-from create_bank import LegacyMode
-from ota_update_phase import OtaClientUpdatePhase
-from ota_client_interface import OtaClientInterface
-from ota_metadata import OtaMetadata, PersistentInf
-from ota_status import OtaStatus, OtaStatusControlMixin
-from ota_error import OtaErrorUnrecoverable, OtaErrorRecoverable, OtaErrorBusy
-from configs import OTAFileCacheControl, config as cfg
-from proxy_info import proxy_cfg
-import log_util
+from app.copy_tree import CopyTree
+from app.create_bank import StandByBankCreator
+from app.downloader import Downloader
+from app.ota_update_phase import OtaClientUpdatePhase
+from app.interface import OtaClientInterface
+from app.ota_metadata import OtaMetadata, PersistentInf
+from app.ota_status import OtaStatus, OtaStatusControlMixin
+from app.ota_error import OtaErrorUnrecoverable, OtaErrorRecoverable, OtaErrorBusy
+from app.configs import OTAFileCacheControl, config as cfg
+from app.proxy_info import proxy_cfg
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
@@ -374,7 +374,7 @@ class _BaseOtaClient(OtaStatusControlMixin, OtaClientInterface):
         def _update_phase(phase):
             self._update_phase = phase
 
-        _standby_bank_creator = LegacyMode(
+        _standby_bank_creator = StandByBankCreator(
             cookies=cookies,
             metadata=metadata,
             url_base=url,
@@ -502,7 +502,7 @@ class _BaseOtaClient(OtaStatusControlMixin, OtaClientInterface):
 def gen_ota_client_class(bootloader: str):
     if bootloader == "grub":
 
-        from grub_ota_partition import GrubControlMixin, OtaPartitionFile
+        from app.grub_ota_partition import GrubControlMixin, OtaPartitionFile
 
         class OtaClient(_BaseOtaClient, GrubControlMixin):
             def __init__(self):
@@ -515,7 +515,7 @@ def gen_ota_client_class(bootloader: str):
 
     elif bootloader == "cboot":
 
-        from extlinux_control import CBootControl, CBootControlMixin
+        from app.extlinux_control import CBootControl, CBootControlMixin
 
         class OtaClient(_BaseOtaClient, CBootControlMixin):
             def __init__(self):

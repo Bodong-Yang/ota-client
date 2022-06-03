@@ -7,31 +7,20 @@ from multiprocessing import Process
 from threading import Lock, Condition
 from typing import Tuple
 
-import otaclient_v2_pb2 as v2
-from ota_status import OtaStatus
-from ota_error import OtaErrorRecoverable
-from ota_client import OtaClient, OtaStateSync
-from ota_client_call import OtaClientCall
-from proxy_info import proxy_cfg
-from ecu_info import EcuInfo
+from app import otaclient_v2_pb2 as v2
+from app.ota_status import OtaStatus
+from app.ota_error import OtaErrorRecoverable
+from app.ota_client import OtaClient, OtaStateSync
+from app.ota_client_call import OtaClientCall
+from app.proxy_info import proxy_cfg
+from app.ecu_info import EcuInfo
 
-from configs import server_cfg, config as cfg
-import log_util
+from app.configs import server_cfg, config as cfg
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
 )
-
-
-def _path_load():
-    import sys
-    from pathlib import Path
-
-    project_base = Path(__file__).absolute().parent.parent
-    sys.path.append(str(project_base))
-
-
-_path_load()
 
 
 def _statusprogress_msg_from_dict(input: dict) -> v2.StatusProgress:

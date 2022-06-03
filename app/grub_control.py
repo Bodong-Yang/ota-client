@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 from pprint import pformat
 
-import log_util
-from configs import config as cfg
-from ota_error import OtaErrorUnrecoverable
+from app import log_util
+from app.configs import config as cfg
+from app.ota_error import OtaErrorUnrecoverable
 
 assert cfg.BOOTLOADER == "grub"
 

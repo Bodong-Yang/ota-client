@@ -6,12 +6,12 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from configs import config as cfg
-from ota_client_interface import BootControlInterface
-from ota_status import OtaStatus
-from grub_control import GrubControl
-from ota_error import OtaErrorUnrecoverable
-import log_util
+from app.configs import config as cfg
+from app.interface import BootControlInterface
+from app.ota_status import OtaStatus
+from app.grub_control import GrubControl
+from app.ota_error import OtaErrorUnrecoverable
+from app import log_util
 
 assert cfg.BOOTLOADER == "grub"
 

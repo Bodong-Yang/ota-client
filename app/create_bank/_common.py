@@ -1,18 +1,19 @@
 r"""Common used helpers, classes and functions for different bank creating methods."""
-from collections import UserDict
+import os
+import queue
+import shutil
 import time
 import weakref
-import queue
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock, Semaphore
-from typing import ClassVar, List, Dict, Set, Tuple
+from typing import ClassVar, Generator, List, Dict, Set, Tuple, Union
 
-from app._common import verify_file
+from app._common import file_sha256
 from app.configs import config as cfg
 from app.ota_metadata import RegularInf
-import app.log_util as log_util
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)

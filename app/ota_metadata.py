@@ -2,17 +2,20 @@
 
 import base64
 import json
+import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from OpenSSL import crypto
 from pathlib import Path
 from pprint import pformat
 from functools import partial
-from ota_error import OtaErrorRecoverable
-from configs import config as cfg
 from typing import ClassVar, Optional
 
-import log_util
+from app.ota_error import OtaErrorRecoverable
+from app.configs import config as cfg
+from app._common import verify_file
+from app import log_util
 
 logger = log_util.get_logger(
     __name__, cfg.LOG_LEVEL_TABLE.get(__name__, cfg.DEFAULT_LOG_LEVEL)
