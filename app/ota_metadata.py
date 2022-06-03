@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import base64
 import json
 import os
@@ -274,6 +272,12 @@ class DirectoryInf(_BaseInf):
 
         del self._left
 
+    def mkdir2bank(self, dst_root: Path, *, src_root: Path):
+        _target = dst_root / self.path.relative_to(src_root)
+        _target.mkdir(parents=True, exist_ok=True)
+        os.chmod(_target, self.mode)
+        os.chown(_target, self.uid, self.gid)
+
 
 @dataclass
 class SymbolicLinkInf(_BaseInf):
@@ -299,6 +303,16 @@ class SymbolicLinkInf(_BaseInf):
         self.srcpath = Path(de_escape(res.group("target")))
 
         del self._left
+
+    def symlink2bank(self, dst_root: Path, *, src_root: Path):
+        if Path("/boot") in self.slink.parents:
+            raise ValueError("symbolic link in /boot directory is not supported")
+
+        _target = dst_root / self.slink.relative_to(src_root)
+        _target.symlink_to(self.srcpath)
+        # set the permission on the file itself
+        os.chmod(_target, self.mode, follow_symlinks=False)
+        os.chown(_target, self.uid, self.gid, follow_symlinks=False)
 
 
 @dataclass
@@ -355,3 +369,43 @@ class RegularInf:
             # it's OK to skip checking of inode,
             # as un-existed inode will be matched to None
             self.inode = _ma.group("inode")
+
+    def relative_to(self, root: Path) -> Path:
+        return self.path.relative_to(root)
+
+    def verify_file(self, *, src_root: Path) -> bool:
+        _src = src_root / self.path.relative_to("/")
+        return verify_file(_src, self.sha256hash, self.size)
+
+    def copy2bank(self, dst_root: Path, /, *, src_root: Path):
+        """Copy file pointed by self to the dst bank."""
+        _src = src_root / self.path.relative_to("/")
+        _dst = dst_root / self.path.relative_to("/")
+        shutil.copy2(_src, _dst, follow_symlinks=False)
+        # still ensure permission on dst
+        os.chmod(_dst, self.mode)
+        os.chown(_dst, self.uid, self.gid)
+
+    def copy2dst(self, dst: Path, /, *, src_root: Path):
+        """Copy file pointed by self to the dst."""
+        _src = src_root / self.path.relative_to("/")
+        shutil.copy2(_src, dst, follow_symlinks=False)
+        # still ensure permission on dst
+        os.chmod(dst, self.mode)
+        os.chown(dst, self.uid, self.gid)
+
+    def copy_from_src(self, src: Path, *, dst_root: Path):
+        """Copy file from src to dst pointed by regular_inf."""
+        _dst = dst_root / self.path.relative_to("/")
+        shutil.copy2(src, _dst, follow_symlinks=False)
+        # still ensure permission on dst
+        os.chmod(_dst, self.mode)
+        os.chown(_dst, self.uid, self.gid)
+
+    def move_from_src(self, src: Path, *, dst_root: Path):
+        """Copy file from src to dst pointed by regular_inf."""
+        _dst = dst_root / self.path.relative_to("/")
+        shutil.move(src, _dst, follow_symlinks=False)
+        # still ensure permission on dst
+        os.chmod(_dst, self.mode)
+        os.chown(_dst, self.uid, self.gid)
