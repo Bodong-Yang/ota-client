@@ -422,11 +422,11 @@ class RegularInf:
         return self._ma.group("hash")
 
     @property
-    def path(self) -> Path:
-        return Path(self._ma.group("path"))
+    def path(self) -> str:
+        return self._ma.group("path")
 
     def make_relative_to_mount_point(self, mp) -> Path:
-        return Path(mp) / Path(self.path).relative_to(self.base)
+        return Path(mp) / os.path.relpath(self.path, self.base)
 
     def verify_file(self, *, src_mount_point: Union[Path, str]) -> bool:
         """Verify file that with the path relative to <src_mount_point>."""

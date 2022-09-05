@@ -195,10 +195,11 @@ class LegacyMode(StandbySlotCreatorProtocol):
         begin_time = time.thread_time_ns()
 
         processed = RegInfProcessedStats()
-        if str(reginf.path).startswith("/boot"):
-            dst = self.boot_dir / reginf.path.relative_to("/boot")
+        _regpath = Path(reginf.path)
+        if reginf.base == "/boot":
+            dst = reginf.make_relative_to_mount_point(self.boot_dir)
         else:
-            dst = self.standby_slot_mp / reginf.path.relative_to("/")
+            dst = reginf.make_relative_to_mount_point(self.standby_slot_mp)
 
         # case 1: if is_hardlink file, get a tracker from the register
         if reginf.nlink >= 2:
@@ -210,7 +211,7 @@ class LegacyMode(StandbySlotCreatorProtocol):
                 _identifier = reginf.inode
 
             _hardlink_tracker, _is_writer = self._hardlink_register.get_tracker(
-                _identifier, reginf.path, reginf.nlink
+                _identifier, _regpath, reginf.nlink
             )
 
             # case 1.1: is hardlink and this thread is subscriber
@@ -223,7 +224,7 @@ class LegacyMode(StandbySlotCreatorProtocol):
             # case 1.2: is hardlink and is writer
             else:
                 try:
-                    if reginf.path.is_file() and reginf.verify_file(
+                    if _regpath.is_file() and reginf.verify_file(
                         src_mount_point=self.reference_slot_mp
                     ):
                         # copy file from active bank if hash is the same
@@ -258,7 +259,7 @@ class LegacyMode(StandbySlotCreatorProtocol):
 
         # case 2: normal file
         else:
-            if reginf.path.is_file() and reginf.verify_file(
+            if _regpath.is_file() and reginf.verify_file(
                 src_mount_point=self.reference_slot_mp
             ):
                 # copy file from active bank if hash is the same
