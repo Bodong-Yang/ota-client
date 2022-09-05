@@ -1,4 +1,5 @@
 import base64
+from collections import defaultdict
 import json
 import os
 import re
@@ -8,7 +9,17 @@ from OpenSSL import crypto
 from pathlib import Path
 from pprint import pformat
 from functools import partial
-from typing import Any, ClassVar, Optional, Union
+from typing import (
+    Any,
+    ClassVar,
+    DefaultDict,
+    Dict,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from .configs import config as cfg
 from .common import verify_file
@@ -339,84 +350,82 @@ class PersistentInf:
         self.path = Path(de_escape(info.strip()[1:-1]))
 
 
-@dataclass
 class RegularInf:
     """RegularInf scheme for regulars.txt.
 
     format: mode,uid,gid,link number,sha256sum,'path/to/file'[,size[,inode]]
     example: 0644,1000,1000,1,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,'path/to/file',1234,12345678
 
+    Attrs:
+        mode: int
+        uid: int
+        gid: int
+        nlink: int
+        sha256hash: str
+        path: Path
+        size: Optional[int] = None
+        inode: Optional[str] = None
+
     NOTE: size and inode sections are both optional, if inode exists, size must exist.
     NOTE 2: path should always be relative to '/', not relative to any mount point!
     """
 
-    mode: int
-    uid: int
-    gid: int
-    nlink: int
-    sha256hash: str
-    path: Path
-    _base: str
-    size: Optional[int] = None
-    inode: Optional[str] = None
+    __slots__ = ("_ma",)
 
+    _ma: re.Match
     _reginf_pa: ClassVar[re.Pattern] = re.compile(
         r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),(?P<nlink>\d+),(?P<hash>\w+),'(?P<path>.+)'(,(?P<size>\d+)(,(?P<inode>\d+))?)?"
     )
 
-    @classmethod
-    def parse_reginf(cls, _input: str):
-        _ma = cls._reginf_pa.match(_input)
+    def __init__(self, _input: str) -> None:
+        _ma = self._reginf_pa.match(_input)
         assert _ma is not None, f"matching reg_inf failed for {_input}"
+        self._ma = _ma
 
-        mode = int(_ma.group("mode"), 8)
-        uid = int(_ma.group("uid"))
-        gid = int(_ma.group("gid"))
-        nlink = int(_ma.group("nlink"))
-        sha256hash = _ma.group("hash")
-        path = Path(de_escape(_ma.group("path")))
+    @classmethod
+    def parse_reginf(cls, _input: str) -> "RegularInf":
+        return cls(_input)
 
-        # special treatment for /boot folder
-        _base = "/boot" if str(path).startswith("/boot") else "/"
+    @property
+    def base(self) -> str:
+        return "/boot" if self._ma.group("path").startswith("/boot") else "/"
 
-        size, inode = None, None
-        if _size := _ma.group("size"):
-            size = int(_size)
-            # ensure that size exists before parsing inode
-            # it's OK to skip checking of inode,
-            # as un-existed inode will be matched to None
-            inode = _ma.group("inode")
+    @property
+    def mode(self) -> int:
+        return int(self._ma.group("mode"), 8)
 
-        return cls(
-            mode=mode,
-            uid=uid,
-            gid=gid,
-            path=path,
-            nlink=nlink,
-            sha256hash=sha256hash,
-            size=size,
-            inode=inode,
-            _base=_base,
-        )
+    @property
+    def uid(self) -> int:
+        return int(self._ma.group("uid"))
 
-    def __hash__(self) -> int:
-        """Only use path to distinguish unique RegularInf."""
-        return hash(self.path)
+    @property
+    def gid(self) -> int:
+        return int(self._ma.group("gid"))
 
-    def __eq__(self, _other) -> bool:
-        """
-        NOTE: also take Path as _other
-        """
-        if isinstance(_other, Path):
-            return self.path == _other
+    @property
+    def nlink(self) -> int:
+        return int(self._ma.group("nlink"))
 
-        if isinstance(_other, self.__class__):
-            return self.path == _other.path
+    @property
+    def size(self) -> Optional[int]:
+        if res := self._ma.group("size"):
+            return int(res)
 
-        return False
+    @property
+    def inode(self) -> Optional[str]:
+        if res := self._ma.group("inode"):
+            return res
 
-    def make_relative_to_mount_point(self, mp: Union[Path, str]) -> Path:
-        return Path(mp) / self.path.relative_to(self._base)
+    @property
+    def sha256hash(self):
+        return self._ma.group("hash")
+
+    @property
+    def path(self) -> Path:
+        return Path(self._ma.group("path"))
+
+    def make_relative_to_mount_point(self, mp) -> Path:
+        return Path(mp) / Path(self.path).relative_to(self.base)
 
     def verify_file(self, *, src_mount_point: Union[Path, str]) -> bool:
         """Verify file that with the path relative to <src_mount_point>."""
@@ -460,3 +469,97 @@ class RegularInf:
         # still ensure permission on dst
         os.chown(_dst, self.uid, self.gid)
         os.chmod(_dst, self.mode)
+
+
+class UniqueRegInfByPath:
+    __slots__ = ("reginf",)
+
+    def __init__(self, _reginf: RegularInf) -> None:
+        self.reginf = _reginf
+
+    def __hash__(self) -> int:
+        return hash(self.reginf.path)
+
+    def __eq__(self, _other) -> bool:
+        """
+        NOTE: also take Path as _other
+        """
+        if isinstance(_other, (Path, str)):
+            return self.reginf.path == str(_other)
+        if isinstance(_other, self.__class__):
+            return self.reginf.path == _other.reginf.path
+        return False
+
+
+class UniqueRegInfByHash:
+    __slots__ = ("reginf",)
+
+    def __init__(self, _reginf: RegularInf) -> None:
+        self.reginf = _reginf
+
+    def __hash__(self) -> int:
+        return hash(self.reginf.sha256hash)
+
+    def __eq__(self, _other) -> bool:
+        """
+        NOTE: also take Path as _other
+        """
+        if isinstance(_other, Sha256hashAsPyHash):
+            return self.reginf.sha256hash == _other
+        if isinstance(_other, self.__class__):
+            return self.reginf.sha256hash == _other.reginf.sha256hash
+        return False
+
+
+class Sha256hashAsPyHash(str):
+    def __hash__(self) -> int:
+        return int(self, base=16)
+
+
+class UniquePathBucket(Set[UniqueRegInfByPath]):
+    def iter_entries(self) -> Iterator[Tuple[bool, UniqueRegInfByPath]]:
+        _len, _count = len(self), 0
+        for entry in self:
+            _count += 1
+            yield _count == _len, entry
+
+
+class RegInfDelta:
+    def __init__(self) -> None:
+        self._unique_path: Dict[UniqueRegInfByPath, UniqueRegInfByPath] = dict()
+        self._hash_bucket: DefaultDict[
+            Sha256hashAsPyHash, UniquePathBucket
+        ] = defaultdict(UniquePathBucket)
+
+    def add_from_info(self, _input: str):
+        _reginf = RegularInf(_input)
+        _unique_path = UniqueRegInfByPath(_reginf)
+
+        self._unique_path[_unique_path] = _unique_path
+        self._hash_bucket[_reginf.sha256hash].add(_unique_path)
+
+    def remove_bucket(self, _hash: Sha256hashAsPyHash):
+        _poped = self._hash_bucket.pop(_hash)
+        for _path in _poped:
+            self._unique_path.pop(_path)
+
+    def contains_path(self, _path: Union[Path, str]) -> bool:
+        return str(_path) in self._unique_path
+
+    def contains_hash(self, _hash: Sha256hashAsPyHash) -> bool:
+        return _hash in self._hash_bucket
+
+    def get_reginf_by_path(self, _path: Union[Path, str]) -> RegularInf:
+        return self._unique_path[str(_path)]  # type: ignore
+
+    def iter_pop_bucket(
+        self,
+    ) -> Iterator[Tuple[Sha256hashAsPyHash, UniquePathBucket]]:
+        while True:
+            try:
+                _hash, _bucket = self._hash_bucket.popitem()
+                for _path in _bucket:
+                    self._unique_path.pop(_path)
+                yield _hash, _bucket
+            except KeyError:
+                break
