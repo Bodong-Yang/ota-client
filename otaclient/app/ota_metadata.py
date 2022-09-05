@@ -532,8 +532,7 @@ class RegInfDelta:
             Sha256hashAsPyHash, UniquePathBucket
         ] = defaultdict(UniquePathBucket)
 
-    def add_from_info(self, _input: str):
-        _reginf = RegularInf(_input)
+    def add(self, _reginf: RegularInf):
         _unique_path = UniqueRegInfByPath(_reginf)
 
         self._unique_path[_unique_path] = _unique_path

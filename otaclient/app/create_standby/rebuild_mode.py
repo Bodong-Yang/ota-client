@@ -34,10 +34,11 @@ from ..proto import wrapper
 from ..ota_metadata import (
     PersistentInf,
     SymbolicLinkInf,
+    UniquePathBucket,
 )
 from .. import log_util
 
-from .common import HardlinkRegister, RegularInfSet, DeltaGenerator
+from .common import HardlinkRegister, DeltaGenerator
 from .interface import StandbySlotCreatorProtocol, UpdateMeta
 
 logger = log_util.get_logger(
@@ -200,7 +201,7 @@ class RebuildMode(StandbySlotCreatorProtocol):
         # apply delta
         logger.info("start applying delta...")
         with ThreadPoolExecutor(thread_name_prefix="create_standby_slot") as pool:
-            for _hash, _regulars_set in self.delta_bundle.new_delta.items():
+            for _hash, _regulars_set in self.delta_bundle.new_delta.iter_pop_bucket():
                 # interrupt update if _tasks_tracker collects error
                 if e := _tasks_tracker.last_error:
                     logger.error(f"interrupt update due to {e!r}")
@@ -222,7 +223,11 @@ class RebuildMode(StandbySlotCreatorProtocol):
             _tasks_tracker.wait(self.stats_collector.wait_staging)
 
     def _apply_reginf_set(
-        self, _hash: str, _regs_set: RegularInfSet, *, download_se: Semaphore
+        self,
+        _hash: str,
+        _regs_set: UniquePathBucket,
+        *,
+        download_se: Semaphore,
     ):
         stats_list: List[RegInfProcessedStats] = []  # for ota stats report
 
@@ -230,9 +235,10 @@ class RebuildMode(StandbySlotCreatorProtocol):
         _local_copy_available = _local_copy.is_file()
         _first_copy_prepared = _local_copy_available
 
-        for is_last, entry in _regs_set.iter_entries():
+        for is_last, wrapped_entry in _regs_set.iter_entries():
             cur_stat = RegInfProcessedStats()
             _start = time.thread_time_ns()
+            entry = wrapped_entry.reginf
 
             # prepare first copy for the hash group
             if not _local_copy_available:

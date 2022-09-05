@@ -11,9 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock
 from typing import (
-    Iterator,
     List,
-    Dict,
     Optional,
     OrderedDict,
     Set,
@@ -24,7 +22,7 @@ from weakref import WeakKeyDictionary, WeakValueDictionary
 
 from ..common import file_sha256
 from ..configs import config as cfg
-from ..ota_metadata import DirectoryInf, RegularInf
+from ..ota_metadata import DirectoryInf, RegInfDelta, RegularInf, Sha256hashAsPyHash
 from .. import log_util
 from ..update_stats import (
     OTAUpdateStatsCollector,
@@ -117,64 +115,13 @@ class HardlinkRegister:
                 return _tracker, True
 
 
-class RegularInfSet(OrderedDict[RegularInf, None]):
-    """Use RegularInf as key, and RegularInf use path: Path as hash key."""
-
-    def add(self, entry: RegularInf):
-        self[entry] = None
-
-    def remove(self, entry: RegularInf):
-        del self[entry]
-
-    def iter_entries(self) -> Iterator[Tuple[bool, RegularInf]]:
-        _len, _count = len(self), 0
-        for entry, _ in self.items():
-            _count += 1
-            yield _len == _count, entry
-
-
-class RegularDelta(Dict[str, RegularInfSet]):
-    def __init__(self):
-        super().__init__()
-        # for fast lookup regularinf entry
-        self._pathset: Set[Path] = set()
-
-    def __len__(self) -> int:
-        return sum([len(_set) for _, _set in self.items()])
-
-    def add_entry(self, entry: RegularInf):
-        self._pathset.add(entry.path)
-
-        _hash = entry.sha256hash
-        if _hash in self:
-            self[_hash].add(entry)
-        else:
-            _new_set = RegularInfSet()
-            _new_set.add(entry)
-            self[_hash] = _new_set
-
-    def merge_entryset(self, _hash: str, _other: RegularInfSet):
-        if _hash not in self:
-            return
-
-        self[_hash].update(_other)
-        for entry, _ in _other.items():
-            self._pathset.add(entry.path)
-
-    def contains_hash(self, _hash: str) -> bool:
-        return _hash in self
-
-    def contains_path(self, path: Path):
-        return path in self._pathset
-
-
 @dataclass
 class DeltaBundle:
     """NOTE: all paths are canonical!"""
 
     # delta
     rm_delta: List[str]
-    new_delta: RegularDelta
+    new_delta: RegInfDelta
     new_dirs: OrderedDict[DirectoryInf, None]
 
     # misc
@@ -229,15 +176,16 @@ class DeltaGenerator:
         self._cal_and_prepare_old_slot_delta()
 
     def _parse_reginf(self, reginf_file: Union[Path, str]) -> None:
-        self._new_delta = RegularDelta()
-        self._hash_set = set()
+        self._new_delta = RegInfDelta()
+        self._new_hash_set: Set[Sha256hashAsPyHash] = set()
         self.total_regulars_num = 0
+
         with open(reginf_file, "r") as f:
             for line in f:
                 entry = RegularInf(line)
                 self.total_regulars_num += 1
-                self._new_delta.add_entry(entry)
-                self._hash_set.add(entry.sha256hash)
+                self._new_delta.add(entry)
+                self._new_hash_set.add(Sha256hashAsPyHash(entry.sha256hash))
 
         self._stats_collector.store.total_regular_files = self.total_regulars_num
 
@@ -255,7 +203,7 @@ class DeltaGenerator:
             _hash = file_sha256(fpath)
 
         try:
-            self._hash_set.remove(_hash)
+            self._new_hash_set.remove(Sha256hashAsPyHash(_hash))
         except KeyError:
             # this hash has already been prepared
             return
