@@ -362,6 +362,7 @@ class RegularInf:
         gid: int
         nlink: int
         sha256hash: str
+        _base: str
         path: Path
         size: Optional[int] = None
         inode: Optional[str] = None

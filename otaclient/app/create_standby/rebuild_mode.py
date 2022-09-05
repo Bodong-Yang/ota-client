@@ -252,7 +252,7 @@ class RebuildMode(StandbySlotCreatorProtocol):
 
             # special treatment on /boot folder
             _mount_point = (
-                self.standby_slot_mp if not entry._base == "/boot" else self.boot_dir
+                self.standby_slot_mp if not entry.base == "/boot" else self.boot_dir
             )
 
             # prepare this entry

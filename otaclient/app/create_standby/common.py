@@ -4,7 +4,6 @@ import shutil
 import time
 from concurrent.futures import (
     Future,
-    ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
 )
@@ -233,8 +232,9 @@ class DeltaGenerator:
         self._new_delta = RegularDelta()
         self._hash_set = set()
         self.total_regulars_num = 0
-        with open(reginf_file, "r") as f, ProcessPoolExecutor() as pool:
-            for entry in pool.map(RegularInf.parse_reginf, f, chunksize=2048):
+        with open(reginf_file, "r") as f:
+            for line in f:
+                entry = RegularInf(line)
                 self.total_regulars_num += 1
                 self._new_delta.add_entry(entry)
                 self._hash_set.add(entry.sha256hash)
@@ -243,8 +243,9 @@ class DeltaGenerator:
 
     def _parse_dirs_txt(self, new_dirs: Path) -> None:
         self._dirs: OrderedDict[DirectoryInf, None] = OrderedDict()
-        with open(new_dirs, "r") as f, ProcessPoolExecutor() as pool:
-            for _dir in pool.map(DirectoryInf, f, chunksize=2048):
+        with open(new_dirs, "r") as f:
+            for line in f:
+                _dir = DirectoryInf(line)
                 self._dirs[_dir] = None
 
     def _process_file_in_old_slot(
