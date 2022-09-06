@@ -238,7 +238,8 @@ class LegacyMode(StandbySlotCreatorProtocol):
                             processed.errors = self._downloader.download(
                                 reginf.path,
                                 dst,
-                                reginf.sha256hash,
+                                digest=reginf.sha256hash,
+                                size=reginf.size,
                                 url_base=self.image_base_url,
                                 cookies=self.cookies,
                             )
@@ -273,7 +274,8 @@ class LegacyMode(StandbySlotCreatorProtocol):
                     processed.errors = self._downloader.download(
                         reginf.path,
                         dst,
-                        reginf.sha256hash,
+                        digest=reginf.sha256hash,
+                        size=reginf.size,
                         url_base=self.image_base_url,
                         cookies=self.cookies,
                     )
