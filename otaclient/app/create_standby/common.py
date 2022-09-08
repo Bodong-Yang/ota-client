@@ -184,7 +184,7 @@ class DeltaGenerator:
             for line in f:
                 entry = RegularInf(line)
                 self.total_regulars_num += 1
-                self._new_delta.add(entry)
+                self._new_delta.add(entry, _hash=entry.sha256hash)
                 self._new_hash_set.add(Sha256hashAsPyHash(entry.sha256hash))
 
         self._stats_collector.store.total_regular_files = self.total_regulars_num

@@ -101,7 +101,7 @@ class LegacyMode(StandbySlotCreatorProtocol):
                 for line in dir_txt:
                     dirinf = DirectoryInf(line)
                     target_path = self.standby_slot_mp.joinpath(
-                        dirinf.path.relative_to("/")
+                        os.path.relpath(dirinf.path, "/")
                     )
 
                     target_path.mkdir(mode=dirinf.mode, parents=True, exist_ok=True)
@@ -178,13 +178,13 @@ class LegacyMode(StandbySlotCreatorProtocol):
 
             with open(f.name, "r") as persist_txt:
                 for line in persist_txt:
-                    perinf = PersistentInf(line)
+                    perinf_path = Path(PersistentInf(line).path)
                     if (
-                        perinf.path.is_file()
-                        or perinf.path.is_dir()
-                        or perinf.path.is_symlink()
+                        perinf_path.is_file()
+                        or perinf_path.is_dir()
+                        or perinf_path.is_symlink()
                     ):  # NOTE: not equivalent to perinf.path.exists()
-                        copy_tree.copy_with_parents(perinf.path, self.standby_slot_mp)
+                        copy_tree.copy_with_parents(perinf_path, self.standby_slot_mp)
 
     def _create_regular_file(self, reginf: RegularInf, *, download_se: Semaphore):
         # thread_time for multithreading function

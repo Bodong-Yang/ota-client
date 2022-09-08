@@ -1,16 +1,15 @@
 import base64
-from collections import defaultdict
 import json
 import os
 import re
 import shutil
-from dataclasses import dataclass, field
+from abc import ABC
+from collections import defaultdict
 from OpenSSL import crypto
 from pathlib import Path
 from pprint import pformat
 from functools import partial
 from typing import (
-    Any,
     ClassVar,
     DefaultDict,
     Dict,
@@ -246,149 +245,34 @@ def de_escape(s: str) -> str:
     return s.replace(r"'\''", r"'")
 
 
-@dataclass
-class _BaseInf:
-    """Base class for dir, symlink, persist entry."""
-
-    mode: int
-    uid: int
-    gid: int
-    _left: str = field(init=False, compare=False, repr=False)
-
-    _base_pattern: ClassVar[re.Pattern] = re.compile(
-        r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),(?P<left_over>.*)"
-    )
-
-    def __init__(self, info: str):
-        match_res: Optional[re.Match] = self._base_pattern.match(info.strip())
-        assert match_res is not None, f"match base_inf failed: {info}"
-
-        self.mode = int(match_res.group("mode"), 8)
-        self.uid = int(match_res.group("uid"))
-        self.gid = int(match_res.group("gid"))
-        self._left: str = match_res.group("left_over")
-
-
-@dataclass
-class DirectoryInf(_BaseInf):
-    """Directory file information class for dirs.txt.
-    format: mode,uid,gid,'dir/name'
-
-    NOTE: only use path for hash key
-    """
-
-    path: Path
-
-    def __init__(self, info):
-        super().__init__(info)
-        self.path = Path(de_escape(self._left[1:-1]))
-
-        del self._left
-
-    def __eq__(self, _other: Any) -> bool:
-        if isinstance(_other, DirectoryInf):
-            return _other.path == self.path
-        elif isinstance(_other, Path):
-            return _other == self.path
-        else:
-            return False
+class UniqueRegInfByPathMixin:
+    path: str
 
     def __hash__(self) -> int:
         return hash(self.path)
 
-    def mkdir_relative_to_mount_point(self, mount_point: Union[Path, str]):
-        _target = Path(mount_point) / self.path.relative_to("/")
-        _target.mkdir(parents=True, exist_ok=True)
-        os.chmod(_target, self.mode)
-        os.chown(_target, self.uid, self.gid)
+    def __eq__(self, _other) -> bool:
+        """
+        NOTE: also take Path as _other
+        """
+        if isinstance(_other, (Path, str)):
+            return self.path == str(_other)
+        if isinstance(_other, self.__class__):
+            return self.path == _other.path
+        return False
 
 
-@dataclass
-class SymbolicLinkInf(_BaseInf):
-    """Symbolik link information class for symlinks.txt.
-
-    format: mode,uid,gid,'path/to/link','path/to/target'
-    example:
-    """
-
-    slink: Path
-    srcpath: Path
-
-    _pattern: ClassVar[re.Pattern] = re.compile(
-        r"'(?P<link>.+)((?<!\')',')(?P<target>.+)'"
-    )
-
-    def __init__(self, info):
-        super().__init__(info)
-        res = self._pattern.match(self._left)
-        assert res is not None, f"match symlink failed: {info}"
-
-        self.slink = Path(de_escape(res.group("link")))
-        self.srcpath = Path(de_escape(res.group("target")))
-
-        del self._left
-
-    def link_at_mount_point(self, mount_point: Union[Path, str]):
-        # NOTE: symbolic link in /boot directory is not supported. We don't use it.
-        _newlink = Path(mount_point) / self.slink.relative_to("/")
-        _newlink.symlink_to(self.srcpath)
-        # set the permission on the file itself
-        os.chown(_newlink, self.uid, self.gid, follow_symlinks=False)
-
-
-@dataclass
-class PersistentInf:
-    """Persistent file information class for persists.txt
-
-    format: 'path'
-    """
-
-    path: Path
-
-    def __init__(self, info: str):
-        self.path = Path(de_escape(info.strip()[1:-1]))
-
-
-class RegularInf:
-    """RegularInf scheme for regulars.txt.
-
-    format: mode,uid,gid,link number,sha256sum,'path/to/file'[,size[,inode]]
-    example: 0644,1000,1000,1,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,'path/to/file',1234,12345678
-
-    Attrs:
-        mode: int
-        uid: int
-        gid: int
-        nlink: int
-        sha256hash: str
-        _base: str
-        path: Path
-        size: Optional[int] = None
-        inode: Optional[str] = None
-
-    NOTE: size and inode sections are both optional, if inode exists, size must exist.
-    NOTE 2: path should always be relative to '/', not relative to any mount point!
-    """
+class _BaseInf(ABC):
+    """Base class for reginf, dir, symlink, persist entry."""
 
     __slots__ = ("_ma",)
+    _pa: ClassVar[re.Pattern]
 
-    _ma: re.Match
-    _reginf_pa: ClassVar[re.Pattern] = re.compile(
-        r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),(?P<nlink>\d+),(?P<hash>\w+),'(?P<path>.+)'(,(?P<size>\d+)(,(?P<inode>\d+))?)?"
-    )
-
-    def __init__(self, _input: str) -> None:
-        _ma = self._reginf_pa.match(_input)
-        assert _ma is not None, f"matching reg_inf failed for {_input}"
+    def __init__(self, _input: str):
+        _ma = self._pa.match(_input)
+        if _ma is None:
+            raise ValueError(f"matching reg_inf failed for {_input}")
         self._ma = _ma
-
-    @classmethod
-    def parse_reginf(cls, _input: str) -> "RegularInf":
-        return cls(_input)
-
-    @property
-    def base(self) -> str:
-        return "/boot" if self._ma.group("path").startswith("/boot") else "/"
 
     @property
     def mode(self) -> int:
@@ -401,6 +285,103 @@ class RegularInf:
     @property
     def gid(self) -> int:
         return int(self._ma.group("gid"))
+
+
+class _RegInfWitPath(_BaseInf):
+    """Base class for class that has path attr."""
+
+    @property
+    def path(self) -> str:
+        return de_escape(self._ma.group("path"))
+
+
+class DirectoryInf(UniqueRegInfByPathMixin, _RegInfWitPath):
+    """Directory file information class for dirs.txt.
+    format: mode,uid,gid,'dir/name'
+    """
+
+    _pa: ClassVar[re.Pattern] = re.compile(
+        r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),'(?P<path>.*)'"
+    )
+
+    def mkdir_relative_to_mount_point(self, mount_point: Union[Path, str]):
+        _target = Path(mount_point) / os.path.relpath(self.path, "/")
+        _target.mkdir(parents=True, exist_ok=True)
+        os.chmod(_target, self.mode)
+        os.chown(_target, self.uid, self.gid)
+
+
+class SymbolicLinkInf(_BaseInf):
+    """Symbolik link information class for symlinks.txt.
+
+    format: mode,uid,gid,'path/to/link','path/to/target'
+    example:
+    """
+
+    _pa: ClassVar[re.Pattern] = re.compile(
+        r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),'(?P<link>.+)((?<!\')',')(?P<target>.+)'"
+    )
+
+    @property
+    def slink(self) -> str:
+        return de_escape(self._ma.group("link"))
+
+    @property
+    def srcpath(self) -> str:
+        return de_escape(self._ma.group("target"))
+
+    def link_at_mount_point(self, mount_point: Union[Path, str]):
+        # NOTE: symbolic link in /boot directory is not supported. We don't use it.
+        _newlink = Path(mount_point) / os.path.relpath(self.slink, "/")
+        _newlink.symlink_to(self.srcpath)
+        # set the permission on the file itself
+        os.chown(_newlink, self.uid, self.gid, follow_symlinks=False)
+
+
+class PersistentInf(UniqueRegInfByPathMixin):
+    """Persistent file information class for persists.txt
+
+    format: 'path'
+    """
+
+    def __init__(self, info: str):
+        self.path = de_escape(info.strip()[1:-1])
+
+
+class RegularInf(UniqueRegInfByPathMixin, _RegInfWitPath):
+    """RegularInf scheme for regulars.txt.
+
+    format: mode,uid,gid,link number,sha256sum,'path/to/file'[,size[,inode]]
+    example: 0644,1000,1000,1,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,'path/to/file',1234,12345678
+
+    Attrs:
+        mode: int
+        uid: int
+        gid: int
+        nlink: int
+        sha256hash: Sha256hashAsPyHash
+        base: str
+        path: str
+        size: Optional[int] = None
+        inode: Optional[str] = None
+
+    NOTE: size and inode sections are both optional, if inode exists, size must exist.
+    NOTE 2: path should always be relative to '/', not relative to any mount point!
+    NOTE 3: default to be unique by path, but can be wrapped in UniqueByHash class to become unique by hash.
+    """
+
+    __slots__ = ("_ma",)
+    _pa: ClassVar[re.Pattern] = re.compile(
+        r"(?P<mode>\d+),(?P<uid>\d+),(?P<gid>\d+),(?P<nlink>\d+),(?P<hash>\w+),'(?P<path>.+)'(,(?P<size>\d+)(,(?P<inode>\d+))?)?"
+    )
+
+    @classmethod
+    def parse_reginf(cls, _input: str) -> "RegularInf":
+        return cls(_input)
+
+    @property
+    def base(self) -> str:
+        return "/boot" if self._ma.group("path").startswith("/boot") else "/"
 
     @property
     def nlink(self) -> int:
@@ -417,12 +398,8 @@ class RegularInf:
             return res
 
     @property
-    def sha256hash(self):
-        return self._ma.group("hash")
-
-    @property
-    def path(self) -> str:
-        return self._ma.group("path")
+    def sha256hash(self) -> "Sha256hashAsPyHash":
+        return Sha256hashAsPyHash(self._ma.group("hash"))
 
     def make_relative_to_mount_point(self, mp) -> Path:
         return Path(mp) / os.path.relpath(self.path, self.base)
@@ -471,53 +448,13 @@ class RegularInf:
         os.chmod(_dst, self.mode)
 
 
-class UniqueRegInfByPath:
-    __slots__ = ("reginf",)
-
-    def __init__(self, _reginf: RegularInf) -> None:
-        self.reginf = _reginf
-
-    def __hash__(self) -> int:
-        return hash(self.reginf.path)
-
-    def __eq__(self, _other) -> bool:
-        """
-        NOTE: also take Path as _other
-        """
-        if isinstance(_other, (Path, str)):
-            return self.reginf.path == str(_other)
-        if isinstance(_other, self.__class__):
-            return self.reginf.path == _other.reginf.path
-        return False
-
-
-class UniqueRegInfByHash:
-    __slots__ = ("reginf",)
-
-    def __init__(self, _reginf: RegularInf) -> None:
-        self.reginf = _reginf
-
-    def __hash__(self) -> int:
-        return hash(self.reginf.sha256hash)
-
-    def __eq__(self, _other) -> bool:
-        """
-        NOTE: also take Path as _other
-        """
-        if isinstance(_other, Sha256hashAsPyHash):
-            return self.reginf.sha256hash == _other
-        if isinstance(_other, self.__class__):
-            return self.reginf.sha256hash == _other.reginf.sha256hash
-        return False
-
-
 class Sha256hashAsPyHash(str):
     def __hash__(self) -> int:
         return int(self, base=16)
 
 
-class UniquePathBucket(Set[UniqueRegInfByPath]):
-    def iter_entries(self) -> Iterator[Tuple[bool, UniqueRegInfByPath]]:
+class UniquePathBucket(Set[RegularInf]):
+    def iter_entries(self) -> Iterator[Tuple[bool, RegularInf]]:
         _len, _count = len(self), 0
         for entry in self:
             _count += 1
@@ -526,18 +463,17 @@ class UniquePathBucket(Set[UniqueRegInfByPath]):
 
 class RegInfDelta:
     def __init__(self) -> None:
-        self._unique_path: Dict[UniqueRegInfByPath, UniqueRegInfByPath] = dict()
+        self._unique_path: Dict[RegularInf, RegularInf] = dict()
         self._hash_bucket: DefaultDict[
             Sha256hashAsPyHash, UniquePathBucket
         ] = defaultdict(UniquePathBucket)
 
-    def add(self, _reginf: RegularInf):
-        _unique_path = UniqueRegInfByPath(_reginf)
+    def add(self, _reginf: RegularInf, *, _hash: Sha256hashAsPyHash):
+        self._unique_path[_reginf] = _reginf
+        self._hash_bucket[_hash].add(_reginf)
 
-        self._unique_path[_unique_path] = _unique_path
-        self._hash_bucket[_reginf.sha256hash].add(_unique_path)
-
-    def remove_bucket(self, _hash: Sha256hashAsPyHash):
+    def remove_bucket(self, _hash: Union[str, Sha256hashAsPyHash]):
+        _hash = Sha256hashAsPyHash(_hash)
         _poped = self._hash_bucket.pop(_hash)
         for _path in _poped:
             self._unique_path.pop(_path)
@@ -545,8 +481,8 @@ class RegInfDelta:
     def contains_path(self, _path: Union[Path, str]) -> bool:
         return str(_path) in self._unique_path
 
-    def contains_hash(self, _hash: Sha256hashAsPyHash) -> bool:
-        return _hash in self._hash_bucket
+    def contains_hash(self, _hash: Union[str, Sha256hashAsPyHash]) -> bool:
+        return Sha256hashAsPyHash(_hash) in self._hash_bucket
 
     def get_reginf_by_path(self, _path: Union[Path, str]) -> RegularInf:
         return self._unique_path[str(_path)]  # type: ignore

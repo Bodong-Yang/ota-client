@@ -164,13 +164,13 @@ class RebuildMode(StandbySlotCreatorProtocol):
 
         with open(self._recycle_folder / "persistents.txt", "r") as f:
             for entry_line in f:
-                perinf = PersistentInf(entry_line)
+                perinf_path = Path(PersistentInf(entry_line).path)
                 if (
-                    perinf.path.is_file()
-                    or perinf.path.is_dir()
-                    or perinf.path.is_symlink()
+                    perinf_path.is_file()
+                    or perinf_path.is_dir()
+                    or perinf_path.is_symlink()
                 ):  # NOTE: not equivalent to perinf.path.exists()
-                    _copy_tree.copy_with_parents(perinf.path, self.standby_slot_mp)
+                    _copy_tree.copy_with_parents(perinf_path, self.standby_slot_mp)
 
     def _save_meta(self):
         """Save metadata to META_FOLDER."""
@@ -235,10 +235,9 @@ class RebuildMode(StandbySlotCreatorProtocol):
         _local_copy_available = _local_copy.is_file()
         _first_copy_prepared = _local_copy_available
 
-        for is_last, wrapped_entry in _regs_set.iter_entries():
+        for is_last, entry in _regs_set.iter_entries():
             cur_stat = RegInfProcessedStats()
             _start = time.thread_time_ns()
-            entry = wrapped_entry.reginf
 
             # prepare first copy for the hash group
             if not _local_copy_available:
