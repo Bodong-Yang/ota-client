@@ -15,8 +15,10 @@ from typing import (
     Dict,
     Iterator,
     Optional,
+    OrderedDict,
     Set,
     Tuple,
+    Type,
     Union,
 )
 
@@ -238,28 +240,35 @@ class OtaMetadata:
         raise ValueError(f"certificate {certificate} could not be verified")
 
 
-# meta files entry classes
-
-
 def de_escape(s: str) -> str:
     return s.replace(r"'\''", r"'")
 
 
-class UniqueRegInfByPathMixin:
-    path: str
+# meta inf types
 
+
+class UniqueByPathStr:
+    # methods to be added
     def __hash__(self) -> int:
-        return hash(self.path)
+        return hash(self.path)  # type: ignore
 
     def __eq__(self, _other) -> bool:
         """
         NOTE: also take Path as _other
         """
-        if isinstance(_other, (Path, str)):
-            return self.path == str(_other)
+        if isinstance(_other, str):
+            return self.path == _other  # type: ignore
         if isinstance(_other, self.__class__):
-            return self.path == _other.path
+            return self.path == _other.path  # type: ignore
         return False
+
+    # decorator entry
+    @classmethod
+    def wrap(cls, _input_cls: Type) -> Type:
+        # bind the magic method to the input cls
+        _input_cls.__hash__ = cls.__hash__
+        _input_cls.__eq__ = cls.__eq__
+        return _input_cls
 
 
 class _BaseInf(ABC):
@@ -290,12 +299,15 @@ class _BaseInf(ABC):
 class _RegInfWitPath(_BaseInf):
     """Base class for class that has path attr."""
 
+    _ma: re.Match
+
     @property
     def path(self) -> str:
         return de_escape(self._ma.group("path"))
 
 
-class DirectoryInf(UniqueRegInfByPathMixin, _RegInfWitPath):
+@UniqueByPathStr.wrap
+class DirectoryInf(_RegInfWitPath):
     """Directory file information class for dirs.txt.
     format: mode,uid,gid,'dir/name'
     """
@@ -338,7 +350,8 @@ class SymbolicLinkInf(_BaseInf):
         os.chown(_newlink, self.uid, self.gid, follow_symlinks=False)
 
 
-class PersistentInf(UniqueRegInfByPathMixin):
+@UniqueByPathStr.wrap
+class PersistentInf:
     """Persistent file information class for persists.txt
 
     format: 'path'
@@ -348,7 +361,8 @@ class PersistentInf(UniqueRegInfByPathMixin):
         self.path = de_escape(info.strip()[1:-1])
 
 
-class RegularInf(UniqueRegInfByPathMixin, _RegInfWitPath):
+@UniqueByPathStr.wrap
+class RegularInf(_RegInfWitPath):
     """RegularInf scheme for regulars.txt.
 
     format: mode,uid,gid,link number,sha256sum,'path/to/file'[,size[,inode]]
@@ -448,6 +462,9 @@ class RegularInf(UniqueRegInfByPathMixin, _RegInfWitPath):
         os.chmod(_dst, self.mode)
 
 
+# helper container types
+
+
 class Sha256hashAsPyHash(str):
     def __hash__(self) -> int:
         return int(self, base=16)
@@ -459,6 +476,21 @@ class UniquePathBucket(Set[RegularInf]):
         for entry in self:
             _count += 1
             yield _count == _len, entry
+
+
+class UniqueDirSet(OrderedDict[DirectoryInf, None]):
+    def add(self, _dir_info: DirectoryInf):
+        self[_dir_info] = None
+
+    def contains_dir(self, _other: Union[Path, str]):
+        return str(_other) in self
+
+
+class UniqueHashSet(Set[Sha256hashAsPyHash]):
+    pass
+
+
+# delta type
 
 
 class RegInfDelta:

@@ -13,8 +13,6 @@ from threading import Event, Lock
 from typing import (
     List,
     Optional,
-    OrderedDict,
-    Set,
     Tuple,
     Union,
 )
@@ -22,7 +20,15 @@ from weakref import WeakKeyDictionary, WeakValueDictionary
 
 from ..common import file_sha256
 from ..configs import config as cfg
-from ..ota_metadata import DirectoryInf, RegInfDelta, RegularInf, Sha256hashAsPyHash
+from ..ota_metadata import (
+    DirectoryInf,
+    RegInfDelta,
+    RegularInf,
+    Sha256hashAsPyHash,
+    UniqueDirSet,
+    UniqueHashSet,
+    UniquePathBucket,
+)
 from .. import log_util
 from ..update_stats import (
     OTAUpdateStatsCollector,
@@ -120,9 +126,9 @@ class DeltaBundle:
     """NOTE: all paths are canonical!"""
 
     # delta
-    rm_delta: List[str]
+    rm_delta: UniquePathBucket
     new_delta: RegInfDelta
-    new_dirs: OrderedDict[DirectoryInf, None]
+    new_dirs: UniqueDirSet
 
     # misc
     ref_root: Path
@@ -177,7 +183,7 @@ class DeltaGenerator:
 
     def _parse_reginf(self, reginf_file: Union[Path, str]) -> None:
         self._new_delta = RegInfDelta()
-        self._new_hash_set: Set[Sha256hashAsPyHash] = set()
+        self._new_hash_set = UniqueHashSet()
         self.total_regulars_num = 0
 
         with open(reginf_file, "r") as f:
@@ -190,11 +196,10 @@ class DeltaGenerator:
         self._stats_collector.store.total_regular_files = self.total_regulars_num
 
     def _parse_dirs_txt(self, new_dirs: Path) -> None:
-        self._dirs: OrderedDict[DirectoryInf, None] = OrderedDict()
+        self._dirs = UniqueDirSet()
         with open(new_dirs, "r") as f:
             for line in f:
-                _dir = DirectoryInf(line)
-                self._dirs[_dir] = None
+                self._dirs.add(DirectoryInf(line))
 
     def _process_file_in_old_slot(
         self, fpath: Path, *, _hash: Optional[str] = None
@@ -226,7 +231,7 @@ class DeltaGenerator:
         """
         NOTE: all local copies are ready after this method
         """
-        self._rm_list: List[str] = []  # not used
+        self._rm = UniquePathBucket()  # not used
         _canonical_root = Path("/")
 
         # scan old slot and generate delta based on path,
@@ -252,13 +257,9 @@ class DeltaGenerator:
 
                 # skip folder if it doesn't exist on new image,
                 # and also not meant to be fully scanned
-                dir_should_skip = (
-                    False
-                    if (
-                        canonical_curdir_path == _canonical_root
-                        or canonical_curdir_path in self._dirs
-                    )
-                    else True
+                dir_should_skip = not (
+                    canonical_curdir_path == _canonical_root
+                    or self._dirs.contains_dir(canonical_curdir_path)
                 )
                 dir_should_fully_scan = False
 
@@ -312,7 +313,7 @@ class DeltaGenerator:
     ###### public API ######
     def get_delta(self) -> DeltaBundle:
         return DeltaBundle(
-            rm_delta=self._rm_list,
+            rm_delta=self._rm,
             new_delta=self._new_delta,
             new_dirs=self._dirs,
             ref_root=self._ref_root,
