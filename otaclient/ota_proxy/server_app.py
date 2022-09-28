@@ -166,9 +166,17 @@ class App:
 
         respond_started = False
         try:
-            fp, meta = await self._ota_cache.retrieve_file(
+            _bundle = await self._ota_cache.retrieve_file(
                 url, cookies_dict, extra_headers, ota_cache_control_policies
             )
+            if _bundle is None:
+                await self._respond_with_error(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    f"failed to retrieve fp for {url}",
+                    send,
+                )
+                return
+            fp, meta = _bundle
 
             # NOTE: currently only record content_type and content_encoding
             headers = []
