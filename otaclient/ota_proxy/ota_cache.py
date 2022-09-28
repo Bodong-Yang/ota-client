@@ -17,12 +17,14 @@ from typing import (
     Callable,
     Dict,
     AsyncGenerator,
+    Generic,
     List,
     Optional,
     Set,
     Tuple,
     TypeVar,
     Union,
+    cast,
 )
 from urllib.parse import quote, urlparse
 
@@ -43,7 +45,7 @@ def get_backoff(n: int, factor: float, _max: float) -> float:
 _WEAKREF = TypeVar("_WEAKREF")
 
 
-class OngoingCacheTracker:
+class OngoingCacheTracker(Generic[_WEAKREF]):
     """A tracker for an on-going cache entry.
 
     This entry will disappear automatically when writer finished
@@ -81,7 +83,7 @@ class OngoingCacheTracker:
             del self._ref_holer
 
 
-class OngoingCachingRegister:
+class OngoingCachingRegister(Generic[_WEAKREF]):
     """A tracker register class that provides cache streaming
         on same requested file from multiple caller.
 
@@ -92,16 +94,18 @@ class OngoingCachingRegister:
     def __init__(self, base_dir: str):
         self._base_dir = Path(base_dir)
         self._lock = Lock()
-        self._url_ref_dict: Dict[bytes, asyncio.Event] = weakref.WeakValueDictionary()
-        self._ref_tracker_dict: Dict[
-            asyncio.Event, OngoingCacheTracker
-        ] = weakref.WeakKeyDictionary()
+        self._url_ref_dict = cast(
+            Dict[_WEAKREF, asyncio.Event], weakref.WeakValueDictionary()
+        )
+        self._ref_tracker_dict = cast(
+            Dict[asyncio.Event, OngoingCacheTracker], weakref.WeakKeyDictionary()
+        )
 
     def _finalizer(self, fn: str):
         # cleanup(unlink) the tmp file
         (self._base_dir / fn).unlink(missing_ok=True)
 
-    async def get_tracker(self, url: str) -> Tuple[OngoingCacheTracker, bool]:
+    async def get_tracker(self, url: _WEAKREF) -> Tuple[OngoingCacheTracker, bool]:
         _ref = self._url_ref_dict.get(url)
         if _ref:
             await _ref.wait()  # wait for writer to fully initialized
