@@ -18,6 +18,7 @@ from typing import (
     Dict,
     AsyncGenerator,
     List,
+    Optional,
     Set,
     Tuple,
     TypeVar,
@@ -26,7 +27,7 @@ from typing import (
 from urllib.parse import quote, urlparse
 
 
-from .db import CacheMeta, OTACacheDB, DBProxy
+from .db import CacheMeta, OTACacheDB
 from .config import OTAFileCacheControl, config as cfg
 
 import logging
@@ -135,7 +136,7 @@ class LRUCacheHelper:
     BSIZE_DICT = cfg.BUCKET_FILE_SIZE_DICT
 
     def __init__(self):
-        self._db: OTACacheDB = DBProxy(cfg.DB_FILE)
+        self._db = OTACacheDB(cfg.DB_FILE)
         self._closed = False
 
     def _bin_search(self, file_size: int) -> int:
@@ -178,18 +179,14 @@ class LRUCacheHelper:
             logger.debug(f"db: commit {entry=} successfully")
             return True
 
-    def lookup_entry(self, url: str) -> CacheMeta:
-        return self._db.lookup_url(url)
+    def lookup_entry_by_url(self, url: str) -> Optional[CacheMeta]:
+        return self._db.lookup_entry(CacheMeta.url, url)
 
-    def remove_entry(self, *, url: str = None, _hash: str = None) -> bool:
-        """Remove one entry from database by url or hash."""
-        if url and self._db.remove_entries_by_urls(url) == 1:
-            return True
+    def remove_entry_by_url(self, url: str) -> bool:
+        return self._db.remove_entries(CacheMeta.url, url) > 0
 
-        if _hash and self._db.remove_entries_by_hashes(_hash) == 1:
-            return True
-
-        return False
+    def remove_entry_by_hash(self, _hash: str) -> bool:
+        return self._db.remove_entries(CacheMeta.hash, _hash) > 0
 
     def rotate_cache(self, size: int) -> Union[List[str], None]:
         """Wrapper method for calling the database LRU cache rotating method.
@@ -239,8 +236,8 @@ class OTAFile:
             local storage space is enough for caching.
     """
 
-    PIPE_READ_BACKOFF_MAX: int = 6
-    PIPE_READ_BACKOFF_FACTOR: int = 0.001
+    PIPE_READ_BACKOFF_MAX = 6
+    PIPE_READ_BACKOFF_FACTOR = 0.001
 
     def __init__(
         self,
@@ -455,7 +452,7 @@ class OTACacheScrubHelper:
                     valid_cache_entry.add(meta.hash)
 
             # delete the invalid entry from the database
-            self._db.remove_entries_by_urls(*dangling_db_entry)
+            self._db.remove_entries(CacheMeta.url, *dangling_db_entry)
 
             # loop over all files under cache folder,
             # if entry's hash is not presented in the valid_cache_entry set,
@@ -992,8 +989,7 @@ class OTACache:
 
         # cache enabled, lookup the database
         no_cache_available = True
-        meta_db_entry = self._lru_helper.lookup_entry(url)
-        if meta_db_entry:  # cache hit
+        if meta_db_entry := self._lru_helper.lookup_entry_by_url(url):  # cache hit
             logger.debug(f"cache hit for {url=}\n, {meta_db_entry=}")
 
             cache_path: Path = self._base_dir / meta_db_entry.hash
@@ -1007,7 +1003,7 @@ class OTACache:
             if not cache_path.is_file():
                 # invalid cache entry found in the db, cleanup it
                 logger.warning(f"dangling cache entry found: {meta_db_entry=}")
-                self._lru_helper.remove_entry(url=url)
+                self._lru_helper.remove_entry_by_url(url)
             else:
                 no_cache_available = False
 
