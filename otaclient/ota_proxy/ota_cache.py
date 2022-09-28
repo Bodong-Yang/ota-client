@@ -248,7 +248,7 @@ class OTAFile:
         fp: AsyncGenerator[bytes, None],
         meta: CacheMeta,
         *,
-        below_hard_limit_event: Event = None,
+        below_hard_limit_event: Event,
     ):
         self._base_dir = Path(cfg.BASE_DIR)
         self._storage_below_hard_limit = below_hard_limit_event
@@ -304,12 +304,12 @@ class OTAFile:
                         # to stop streaming to the caching thread
                         self._cache_tee_aborted.set()
                     else:
+                        _timout = get_backoff(
+                            err_count,
+                            self.PIPE_READ_BACKOFF_FACTOR,
+                            self.PIPE_READ_BACKOFF_MAX,
+                        )
                         try:
-                            _timout = get_backoff(
-                                err_count,
-                                self.PIPE_READ_BACKOFF_FACTOR,
-                                self.PIPE_READ_BACKOFF_MAX,
-                            )
                             data = self._queue.get(timeout=_timout)
                             err_count = 0
 
@@ -404,7 +404,7 @@ class OTACacheScrubHelper:
         self._excutor = ProcessPoolExecutor()
 
     @staticmethod
-    def _check_entry(base_dir: Path, meta: CacheMeta) -> Union[CacheMeta, bool]:
+    def _check_entry(base_dir: Path, meta: CacheMeta) -> Tuple[CacheMeta, bool]:
         f = base_dir / meta.hash
         if f.is_file():
             hash_f = sha256()
@@ -504,9 +504,9 @@ class OTACache:
         *,
         cache_enabled: bool,
         init_cache: bool,
-        upper_proxy: str = None,
+        upper_proxy: Optional[str] = None,
         enable_https: bool = False,
-        scrub_cache_event: "Event" = None,
+        scrub_cache_event: Optional["Event"] = None,
     ):
         """Init ota_cache instance with configurations."""
         logger.info(
@@ -879,7 +879,7 @@ class OTACache:
                 content_type=response.headers.get(
                     "content-type", "application/octet-stream"
                 ),
-            )
+            )  # type: ignore
 
             async for data, _ in response.content.iter_chunks():
                 yield data
@@ -889,7 +889,7 @@ class OTACache:
         raw_url: str,
         cookies: Dict[str, str],
         extra_headers: Dict[str, str],
-        tracker: OngoingCacheTracker = None,
+        tracker: Optional[OngoingCacheTracker] = None,
     ) -> "Tuple[AsyncGenerator[bytes, None], CacheMeta]":
         """Open file descriptor by opening connection to the remote OTA file server.
 
@@ -926,7 +926,7 @@ class OTACache:
         # start the fp
         try:
             res = self._remote_fp(url, raw_url, cookies, extra_headers)
-            meta = await res.__anext__()
+            meta: CacheMeta = await res.__anext__()  # type: ignore
 
             if tracker is not None:
                 # prepare the temp file in advance(touch the file)
@@ -950,7 +950,7 @@ class OTACache:
         cookies: Dict[str, str],
         extra_headers: Dict[str, str],
         cache_control_policies: Set[OTAFileCacheControl],
-    ) -> Tuple[AsyncGenerator[bytes, None], CacheMeta]:
+    ) -> Optional[Tuple[AsyncGenerator[bytes, None], CacheMeta]]:
         """Exposed API to retrieve a file descriptor.
 
         This method retrieves a file descriptor for incoming client request.
@@ -1049,7 +1049,7 @@ class OTACache:
                 return fp, _tracker.meta
 
         # case 3: cache is available and valid, use cache
-        else:
+        elif meta_db_entry:
             logger.debug(f"use cache for {url=}")
             fp = await self._open_fp_by_cache(meta_db_entry.hash)
             # use cache
