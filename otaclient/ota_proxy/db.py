@@ -70,7 +70,6 @@ class _OTACacheDB:
             # isolation_level=None,  # enable autocommit mode
         )
         self._con.row_factory = sqlite3.Row
-
         # check if the table exists/check whether the db file is valid
         try:
             with self._con as con:
@@ -78,7 +77,6 @@ class _OTACacheDB:
                     "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                     (self.TABLE_NAME,),
                 )
-
                 if cur.fetchone() is None:
                     logger.warning(f"{self.TABLE_NAME} not found, init db...")
                     # create ota_cache table
@@ -86,11 +84,9 @@ class _OTACacheDB:
                         CacheMeta.get_create_table_stmt(self.TABLE_NAME),
                         (),
                     )
-
                     # create indices
                     for idx in self.OTA_CACHE_IDX:
                         con.execute(idx, ())
-
                 ### db performance tunning
                 # enable WAL mode
                 con.execute("PRAGMA journal_mode = WAL;")
@@ -105,7 +101,7 @@ class _OTACacheDB:
             logger.debug(f"init db failed: {e!r}")
             raise e
 
-    def remove_entries_by_field(self, fd: ColumnDescriptor, *_inputs: Any) -> int:
+    def remove_entries(self, fd: ColumnDescriptor, *_inputs: Any) -> int:
         if not _inputs:
             return 0
         if CacheMeta.contains_field(fd) and fd.check_type(_inputs[0]):
@@ -118,9 +114,7 @@ class _OTACacheDB:
                 return cur.rowcount
         return 0
 
-    def lookup_entry_by_field(
-        self, fd: ColumnDescriptor, _input: Any
-    ) -> Optional[CacheMeta]:
+    def lookup_entry(self, fd: ColumnDescriptor, _input: Any) -> Optional[CacheMeta]:
         if not CacheMeta.contains_field(fd) or fd.check_type(_input):
             return
         with self._con as con:

@@ -33,7 +33,7 @@ class ColumnDescriptor(Generic[FV]):
         self._default = default if default is not None else self.field_type()
         super().__init__()
 
-    def __get__(self, obj, objtype=None) -> Union[FV, "ColumnDescriptor"]:
+    def __get__(self, obj, objtype=None) -> Union[FV, "ColumnDescriptor[FV]"]:
         if obj is not None:
             return getattr(obj, self._private_name)
         return self  # return the field descriptor itself when accessed via class
