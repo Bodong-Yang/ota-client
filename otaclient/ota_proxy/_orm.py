@@ -1,4 +1,3 @@
-from abc import ABC
 from dataclasses import asdict, astuple, dataclass, fields
 from typing import Any, Dict, List, Optional, Tuple, Type, Generic, TypeVar, Union
 
@@ -14,11 +13,14 @@ SQLITE_DATATYPES = Union[
 FV = TypeVar("FV", bound=SQLITE_DATATYPES)  # field value type
 
 
-class Column(Generic[FV], ABC):
+class Column(Generic[FV]):
     type_guard: bool
     field_type: Type[FV]
 
-    def __init__(self, field_type: Type[FV], constrains: str) -> None:
+    def __init__(
+        self, field_type: Type[FV], constrains: str, *, type_guard=False
+    ) -> None:
+        self.type_guard = type_guard
         self.field_type = field_type
         self.constrains = constrains
         super().__init__()
@@ -29,14 +31,16 @@ class Column(Generic[FV], ABC):
         return self
 
     def __set__(self, obj, value: Any):
-        if value is None:  # assign default value on None input
+        # during dataclass default value initializing,
+        # or input type is Type[None](NULL)
+        if isinstance(value, type(self)) or value is None:
             value = self.field_type()  # type: ignore
         if self.type_guard and not isinstance(value, self.field_type):
             raise TypeError(f"type_guard: expect {self.field_type}, get {type(value)}")
         # apply default type conversion or type default value
         setattr(obj, self.private_name, value)
 
-    def __set_name__(self, owner: Type, name: str):
+    def __set_name__(self, owner: Type[Any], name: str):
         self.field_name = name
         self.private_name = f"_{name}"
 
@@ -44,13 +48,11 @@ class Column(Generic[FV], ABC):
 @dataclass
 class ORMBase(Generic[FV]):
     @classmethod
-    @property
-    def columns(cls) -> List[str]:
+    def get_columns(cls) -> List[str]:
         return [f.name for f in fields(cls)]
 
     @classmethod
-    @property
-    def shape(cls) -> str:
+    def get_shape(cls) -> str:
         return ",".join(["?"] * len(fields(cls)))
 
     @classmethod
@@ -58,13 +60,13 @@ class ORMBase(Generic[FV]):
         if not row:  # return empty cachemeta on empty input
             return cls()
         # filter away unexpected columns
-        _parsed_row = {k: v for k, v in row.items() if k in set(cls.columns)}
+        _parsed_row = {k: v for k, v in row.items() if k in set(cls.get_columns())}
         return cls(**_parsed_row)
 
     @classmethod
     def get_create_table_stmt(cls, table_name: str) -> str:
         _col_descriptors: List[Column] = [
-            getattr(cls, field.name) for field in fields(cls)
+            getattr(cls, field_name) for field_name in set(cls.get_columns())
         ]
         return (
             f"CREATE TABLE {table_name}("
