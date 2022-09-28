@@ -1,84 +1,46 @@
 import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import make_dataclass
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Tuple, Type, TypeVar, Union, Callable
+from typing import Any, List, Optional, Type, TypeVar, Callable
 
-from .config import CacheMetaProtocol, config as cfg
+from .config import config as cfg
+from ._orm import ColumnDescriptor, ORMBase
 
 import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(cfg.LOG_LEVEL)
 
-_T = TypeVar("_T")
 
-
-class _CacheMetaMixin:
-    _cols = cfg.COLUMNS
-
-    @classmethod
-    def shape(cls) -> str:
-        return ",".join(["?"] * len(cls._cols))
-
-    def to_tuple(self) -> Tuple[_T]:
-        return tuple([getattr(self, k) for k in self._cols])
-
-    @classmethod
-    def row_to_meta(cls, row: Dict[str, _T]) -> CacheMetaProtocol:
-        """Convert a row in dict to CacheMeta instance.
-
-        Args:
-            row: raw dict comes from query result.
-
-        Return:
-            A instance of CacheMeta.
-        """
-        if not row:
-            return
-
-        res = cls()
-        for k in cls._cols:
-            setattr(res, k, row[k])
-
-        return res
-
-
-def _make_cachemeta_cls(name: str) -> Type[CacheMetaProtocol]:
-    """Dynamically create dataclass from CacheMeta scheme defined in config.
-
-    The generated class is aligned with the CacheMetaProtocol.
-    """
-
-    # set default value of each field as field type's zero value
-    return make_dataclass(
-        name,
-        [(k, v.col_type, v.col_type()) for k, v in cfg.COLUMNS.items()],
-        bases=(_CacheMetaMixin,),
+@dataclass
+class CacheMeta(ORMBase):
+    url: ColumnDescriptor[str] = ColumnDescriptor(
+        str, "TEXT UNIQUE NOT NULL PRIMARY KEY"
     )
-
-
-_CacheMeta = _make_cachemeta_cls("_CacheMeta")
-# fix the issue of pickling dynamically generated dataclass
-_CacheMeta.__module__ = __name__
-# type alias
-CacheMeta: Type[CacheMetaProtocol] = _CacheMeta
+    bucket: ColumnDescriptor[int] = ColumnDescriptor(
+        int, "INTEGER NOT NULL", type_guard=True
+    )
+    last_access: ColumnDescriptor[int] = ColumnDescriptor(
+        int, "INTEGER NOT NULL", type_guard=True
+    )
+    hash: ColumnDescriptor[str] = ColumnDescriptor(str, "TEXT NOT NULL")
+    size: ColumnDescriptor[int] = ColumnDescriptor(
+        int, "INTEGER NOT NULL", type_guard=True
+    )
+    content_type: ColumnDescriptor[str] = ColumnDescriptor(str, "TEXT")
+    content_encoding: ColumnDescriptor[str] = ColumnDescriptor(str, "TEXT")
 
 
 class OTACacheDB:
     TABLE_NAME: str = cfg.TABLE_NAME
-    CREATE_TABLE_STMT: str = (
-        f"CREATE TABLE {TABLE_NAME}("
-        + ", ".join([f"{k} {v.col_def}" for k, v in cfg.COLUMNS.items()])
-        + ")"
-    )
+    ROW_TYPE = CacheMeta
     OTA_CACHE_IDX: List[str] = [
         cfg.BUCKET_LAST_ACCESS_IDX,
     ]
-    ROW_SHAPE = CacheMeta.shape()
 
     def __init__(self, db_file: str, init=False):
         logger.debug("init database...")
@@ -121,7 +83,10 @@ class OTACacheDB:
                 if cur.fetchone() is None:
                     logger.warning(f"{self.TABLE_NAME} not found, init db...")
                     # create ota_cache table
-                    con.execute(self.CREATE_TABLE_STMT, ())
+                    con.execute(
+                        self.ROW_TYPE.get_create_table_stmt(self.TABLE_NAME),
+                        (),
+                    )
 
                     # create indices
                     for idx in self.OTA_CACHE_IDX:
@@ -141,56 +106,57 @@ class OTACacheDB:
             logger.debug(f"init db failed: {e!r}")
             raise e
 
-    def remove_entries_by_hashes(self, *hashes: str) -> int:
-        _hashes = [(h,) for h in hashes]
-        with self._con as con:
-            cur = con.executemany(
-                f"DELETE FROM {self.TABLE_NAME} WHERE hash=?", _hashes
-            )
+    def remove_entries_by_field(self, fd: ColumnDescriptor, *_inputs: Any) -> int:
+        if not _inputs:
+            return 0
+        if self.ROW_TYPE.contains_field(fd) and fd.check_type(_inputs[0]):
+            with self._con as con:
+                _regulated_input = [(i,) for i in _inputs]
+                cur = con.executemany(
+                    f"DELETE FROM {self.TABLE_NAME} WHERE {fd.field_name}=?",
+                    _regulated_input,
+                )
+                return cur.rowcount
+        return 0
 
-            return cur.rowcount
-
-    def remove_entries_by_urls(self, *urls: str) -> int:
-        _urls = [(u,) for u in urls]
-        with self._con as con:
-            cur = con.executemany(f"DELETE FROM {self.TABLE_NAME} WHERE url=?", _urls)
-            return cur.rowcount
-
-    def insert_entry(self, *cache_meta: CacheMeta) -> int:
-        rows = [m.to_tuple() for m in cache_meta]
-        with self._con as con:
-            cur = con.executemany(
-                f"INSERT OR REPLACE INTO {self.TABLE_NAME} VALUES ({self.ROW_SHAPE})",
-                rows,
-            )
-            return cur.rowcount
-
-    def lookup_url(self, url: str) -> CacheMeta:
+    def lookup_entry_by_field(
+        self, fd: ColumnDescriptor, _input: Any
+    ) -> Optional[CacheMeta]:
+        if not self.ROW_TYPE.contains_field(fd) or fd.check_type(_input):
+            return
         with self._con as con:
             cur = con.execute(
-                f"SELECT * FROM {self.TABLE_NAME} WHERE url=?",
-                (url,),
+                f"SELECT * FROM {self.TABLE_NAME} WHERE {fd.field_name}=?",
+                (_input,),
             )
-            row = cur.fetchone()
-
-            if row:
+            if row := cur.fetchone():
                 # warm up the cache(update last_access timestamp) here
                 res = CacheMeta.row_to_meta(row)
                 cur = con.execute(
-                    f"UPDATE {self.TABLE_NAME} SET last_access=? WHERE url=?",
-                    (datetime.now().timestamp(), res.url),
+                    (
+                        f"UPDATE {self.TABLE_NAME} SET {self.ROW_TYPE.last_access.field_name}=? "  # type: ignore
+                        f"WHERE {self.ROW_TYPE.url.field_name}=?"  # type: ignore
+                    ),
+                    (int(datetime.now().timestamp()), res.url),
                 )
-
                 return res
-            else:
-                return
+
+    def insert_entry(self, *cache_meta: CacheMeta) -> int:
+        if not cache_meta:
+            return 0
+        with self._con as con:
+            cur = con.executemany(
+                f"INSERT OR REPLACE INTO {self.TABLE_NAME} VALUES ({self.ROW_TYPE.get_shape()})",
+                [m.to_tuple() for m in cache_meta],
+            )
+            return cur.rowcount
 
     def lookup_all(self) -> List[CacheMeta]:
         with self._con as con:
             cur = con.execute(f"SELECT * FROM {self.TABLE_NAME}", ())
             return [CacheMeta.row_to_meta(row) for row in cur.fetchall()]
 
-    def rotate_cache(self, bucket: int, num: int) -> Union[List[str], None]:
+    def rotate_cache(self, bucket: int, num: int) -> Optional[List[str]]:
         """Rotate cache entries in LRU flavour.
 
         Args:
@@ -201,14 +167,20 @@ class OTACacheDB:
             A list of hashes that needed to be deleted for space reserving,
                 or None if no enough entries for space reserving.
         """
+        bucket_fn, last_access_fn = (
+            self.ROW_TYPE.bucket.field_name,  # type: ignore
+            self.ROW_TYPE.last_access.field_name,  # type: ignore
+        )
         # first, check whether we have required number of entries in the bucket
         with self._con as con:
             cur = con.execute(
-                f"SELECT COUNT(*) FROM {self.TABLE_NAME} WHERE bucket=? ORDER BY last_access LIMIT ?",
+                (
+                    f"SELECT COUNT(*) FROM {self.TABLE_NAME} WHERE {bucket_fn}=? "
+                    f"ORDER BY {last_access_fn} LIMIT ?"  # type: ignore
+                ),
                 (bucket, num),
             )
-            _raw_res = cur.fetchone()
-            if _raw_res is None:
+            if not (_raw_res := cur.fetchone()):
                 return
 
             # NOTE: if we can upgrade to sqlite3 >= 3.35,
@@ -220,8 +192,8 @@ class OTACacheDB:
                 cur = con.execute(
                     (
                         f"SELECT * FROM {self.TABLE_NAME} "
-                        "WHERE bucket=? "
-                        "ORDER BY last_access "
+                        f"WHERE {bucket_fn}=? "
+                        f"ORDER BY {last_access_fn} "
                         "LIMIT ?"
                     ),
                     (bucket, num),
@@ -232,13 +204,12 @@ class OTACacheDB:
                 con.execute(
                     (
                         f"DELETE FROM {self.TABLE_NAME} "
-                        "WHERE bucket=? "
-                        "ORDER BY last_access "
+                        f"WHERE {bucket_fn}=? "
+                        f"ORDER BY {last_access_fn} "
                         "LIMIT ?"
                     ),
                     (bucket, num),
                 )
-
                 return [row["hash"] for row in _rows]
 
 
@@ -261,7 +232,7 @@ def _proxy_wrapper(attr_n: str) -> Callable:
             return f()
 
         # inner is dispatched to the db connection threadpool
-        fut = self._executor.submit(_inner)
+        fut: Future = self._executor.submit(_inner)
         return fut.result()
 
     return _wrapped
