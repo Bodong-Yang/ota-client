@@ -28,9 +28,9 @@ from typing import (
 )
 from urllib.parse import quote, urlparse
 
-
-from .db import CacheMeta, OTACacheDB
-from .config import OTAFileCacheControl, config as cfg
+from . import OTAFileCacheControl
+from ._db import CacheMeta, OTACacheDB
+from ._config import config as cfg
 
 import logging
 

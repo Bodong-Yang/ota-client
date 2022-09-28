@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, List, Optional, Type, Callable, cast
 
-from .config import config as cfg
+from ._config import config as cfg
 from ._orm import ColumnDescriptor, ORMBase
 
 import logging

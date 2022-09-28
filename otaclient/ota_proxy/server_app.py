@@ -3,8 +3,9 @@ import aiohttp
 from http import HTTPStatus
 from typing import Any, Dict, List, Union
 
-from . import ota_cache
-from .config import OTAFileCacheControl, config as cfg
+from . import OTAFileCacheControl
+from ._config import config as cfg
+from .ota_cache import OTACache
 
 import logging
 
@@ -41,7 +42,7 @@ class App:
         uvicorn.run(app, host="0.0.0.0", port=8082, log_level="debug", lifespan="on")
     """
 
-    def __init__(self, ota_cache: ota_cache.OTACache):
+    def __init__(self, ota_cache: OTACache):
         self._lock = asyncio.Lock()
         self._closed = True
         self._ota_cache = ota_cache
