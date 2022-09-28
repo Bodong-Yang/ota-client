@@ -35,29 +35,33 @@ class ColumnDescriptor(Generic[FV]):
 
     def __get__(self, obj, objtype=None) -> Union[FV, "ColumnDescriptor"]:
         if obj is not None:
-            return getattr(obj, self.private_name)
-        if obj is None and objtype:
-            # NOTE: align to the behavior of dataclass setting default value:
-            #       To determine whether a field contains a default value,
-            #       dataclasses will call the descriptor’s __get__ method
-            #       using its class access form (i.e. descriptor.__get__(obj=None, type=cls).
-            #       If the descriptor returns a value in this case,
-            #       it will be used as the field’s default.
-            return self._default
-        return self
+            return getattr(obj, self._private_name)
+        return self  # return the field descriptor itself when accessed via class
 
     def __set__(self, obj, value):
+        # handler dataclass assign default value to each fields when init
+        if isinstance(value, type(self)):
+            setattr(obj, self._private_name, self.field_type())
+            return
+
         if self.type_guard and not isinstance(value, self.field_type):
             raise TypeError(f"type_guard: expect {self.field_type}, get {type(value)}")
         # apply default type conversion or type default value
-        setattr(obj, self.private_name, self.field_type(value))  # type: ignore
+        setattr(obj, self._private_name, self.field_type(value))  # type: ignore
 
     def __set_name__(self, owner: Type[Any], name: str):
-        self.field_name = name
-        self.private_name = f"_{name}"
+        self._field_name = name
+        self._private_name = f"_{name}"
+
+    @property
+    def name(self) -> str:
+        return self._field_name
 
     def check_type(self, value: Any) -> bool:
         return isinstance(value, self.field_type)
+
+    def get_field_descriptor(self) -> "ColumnDescriptor":
+        return self
 
 
 @dataclass
@@ -82,7 +86,7 @@ class ORMBase(Generic[FV]):
         return (
             f"CREATE TABLE {table_name}("
             + ", ".join(
-                [f"{col.field_name} {col.constrains}" for col in _col_descriptors]
+                [f"{col._field_name} {col.constrains}" for col in _col_descriptors]
             )
             + ")"
         )
@@ -98,7 +102,7 @@ class ORMBase(Generic[FV]):
     def contains_field(cls, _input: Union[str, ColumnDescriptor]) -> bool:
         try:
             if isinstance(_input, ColumnDescriptor):
-                _input = _input.field_name
+                _input = _input._field_name
             return isinstance(getattr(cls, _input), ColumnDescriptor)
         except AttributeError:
             return False
