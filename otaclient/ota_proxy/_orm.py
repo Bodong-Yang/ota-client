@@ -1,5 +1,16 @@
 from dataclasses import asdict, astuple, dataclass, fields
-from typing import Any, Dict, List, Optional, Tuple, Type, Generic, TypeVar, Union
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Generic,
+    TypeVar,
+    Union,
+    overload,
+)
 
 
 SQLITE_DATATYPES = Union[
@@ -32,6 +43,16 @@ class ColumnDescriptor(Generic[FV]):
         self.constrains = constrains
         self._default = default if default is not None else self.field_type()
         super().__init__()
+
+    @overload
+    def __get__(self, obj: None, objtype: Any) -> "ColumnDescriptor[FV]":
+        """Descriptor accessed via class."""
+        ...
+
+    @overload
+    def __get__(self, obj: object, objtype: Any) -> FV:
+        """Descriptor accessed via bound instance."""
+        ...
 
     def __get__(self, obj, objtype=None) -> Union[FV, "ColumnDescriptor[FV]"]:
         if obj is not None:
