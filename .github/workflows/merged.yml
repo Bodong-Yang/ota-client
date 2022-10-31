@@ -1,9 +1,9 @@
-name: push main
+name: push test_base
 
 on:
   pull_request:
     branches:
-      - main
+      - test_base
     types: [closed]
 
 jobs:
