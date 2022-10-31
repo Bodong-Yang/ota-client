@@ -43,3 +43,5 @@ jobs:
         with:
           commit_message: update otaclient_pb2 hash and version
           file_pattern: ':/proto/.proto_hash :/proto/.version'
+          branch: test_base
+          
