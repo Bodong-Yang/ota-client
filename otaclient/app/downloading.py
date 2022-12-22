@@ -6,11 +6,28 @@ the hash value as file name.
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 from typing import List
 
-from .common import SimpleTasksTracker
+from .common import (
+    OTAFileCacheControl,
+    SimpleTasksTracker,
+    urljoin_ensure_base,
+    verify_file,
+)
 from .configs import config as cfg
-from .downloader import Downloader
+from .downloader import (
+    Downloader,
+    HashVerificaitonError,
+    DestinationNotAvailableError,
+    DownloadError,
+)
+from .errors import (
+    OTAMetaVerificationFailed,
+    OTAErrorUnRecoverable,
+    OTAMetaDownloadFailed,
+    NetworkError,
+)
 from .ota_metadata import RegularInf, UpdateMeta
 from .proxy_info import proxy_cfg
 from .update_stats import (
@@ -44,6 +61,8 @@ class OTAFilesDownloader:
         self._cookies = update_meta.cookies
         # where the downloaded files will go to
         self._storage_dir = Path(update_meta.download_dir)
+        # where to store the OTA image meta
+        self._image_meta_dir = Path(update_meta.ota_meta_dir)
         # stats tracker and collector from otaclient
         self._stats_collector = stats_collector
 
@@ -54,6 +73,12 @@ class OTAFilesDownloader:
             logger.info(f"use {proxy=} for downloading")
             # NOTE: check requests doc for details
             self._proxies = {"http": proxy}
+
+        # check the download folder if there are files in it
+        self._storage_dir.mkdir(exist_ok=True, parents=True)
+        for _f in self._storage_dir.glob("*"):
+            if not verify_file(_f, _f.name, None):
+                _f.unlink(missing_ok=True)
 
     def _download_file(self, entry: RegularInf):
         _download_dst = self._storage_dir / entry.sha256hash
@@ -79,7 +104,33 @@ class OTAFilesDownloader:
         # report the stat of this download
         self._stats_collector.report(_cur_stat)
 
+    def prepare_ota_image_meta(self):
+        """Download the OTA image meta files to the <image_meta_dir>."""
+        try:
+            for _meta_f in self._otameta.get_img_metafiles():
+                meta_f_url = urljoin_ensure_base(self._url_base, quote(_meta_f.file))
+                self._downloader.download(
+                    meta_f_url,
+                    self._image_meta_dir / _meta_f.file,
+                    digest=_meta_f.hash,
+                    proxies=self._proxies,
+                    cookies=self._cookies,
+                    headers={
+                        OTAFileCacheControl.header_lower.value: OTAFileCacheControl.no_cache.value
+                    },
+                )
+        except HashVerificaitonError as e:
+            raise OTAMetaVerificationFailed from e
+        except DestinationNotAvailableError as e:
+            raise OTAErrorUnRecoverable from e
+        except DownloadError as e:
+            raise OTAMetaDownloadFailed from e
+
     def download_ota_files(self, download_meta: DownloadMeta):
+        """Download OTA files as download_meta indicated.
+
+        This method will keep retrying until all the files are downloaded.
+        """
         logger.info(
             f"start to download files: {download_meta.total_files_num=}, {download_meta.total_files_size=}"
         )
@@ -89,17 +140,18 @@ class OTAFilesDownloader:
             title="process_regulars",
         )
 
-        with ThreadPoolExecutor(thread_name_prefix="ota_files_downloading") as pool:
-            for _entry in download_meta.files_list:
-                # interrupt update if _tasks_tracker collects error
-                if e := _tasks_tracker.last_error:
-                    logger.error(f"interrupt update due to {e!r}")
-                    raise e
-                _tasks_tracker.add_task(
-                    _fut := pool.submit(self._download_file, _entry)
-                )
-                _fut.add_done_callback(_tasks_tracker.done_callback)
+        try:
+            with ThreadPoolExecutor(thread_name_prefix="ota_files_downloading") as pool:
+                for _entry in download_meta.files_list:
+                    _tasks_tracker.add_task(
+                        _fut := pool.submit(self._download_file, _entry)
+                    )
+                    _fut.add_done_callback(_tasks_tracker.done_callback)
 
-            logger.info("all downloading tasks are dispatched, wait for finishing...")
-            _tasks_tracker.task_collect_finished()
-            _tasks_tracker.wait(self._stats_collector.wait_staging)
+                logger.info(
+                    "all downloading tasks are dispatched, wait for finishing..."
+                )
+                _tasks_tracker.task_collect_finished()
+                _tasks_tracker.wait(self._stats_collector.wait_staging)
+        except Exception as e:
+            raise NetworkError from e
