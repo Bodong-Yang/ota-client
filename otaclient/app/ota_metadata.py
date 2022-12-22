@@ -351,6 +351,19 @@ class OTAMetadata:
             )
 
 
+@dataclass
+class UpdateMeta:
+    """Meta info for standby slot creator to update slot."""
+
+    cookies: Dict[str, Any]  # cookies needed for requesting remote ota files
+    metadata: OTAMetadata  # meta data for the update request
+    url_base: str  # base url of the remote ota image
+    boot_dir: str  # where to populate files under /boot
+    download_dir: str  # where the downloaded files located
+    standby_slot_mount_point: str
+    active_slot_mount_point: str
+
+
 # meta files entry classes
 
 
