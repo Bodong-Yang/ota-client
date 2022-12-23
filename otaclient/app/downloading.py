@@ -4,6 +4,7 @@ Files are save under <downloaded_ota_files> folder with
 the hash value as file name.
 """
 import time
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
@@ -11,7 +12,7 @@ from typing import List
 
 from .common import (
     OTAFileCacheControl,
-    SimpleTasksTracker,
+    RetryTaskMap,
     urljoin_ensure_base,
     verify_file,
 )
@@ -60,7 +61,7 @@ class OTAFilesDownloader:
         self._url_base = update_meta.url_base
         self._cookies = update_meta.cookies
         # where the downloaded files will go to
-        self._storage_dir = Path(update_meta.download_dir)
+        self._download_dir = Path(update_meta.download_dir)
         # where to store the OTA image meta
         self._image_meta_dir = Path(update_meta.ota_meta_dir)
         # stats tracker and collector from otaclient
@@ -75,13 +76,13 @@ class OTAFilesDownloader:
             self._proxies = {"http": proxy}
 
         # check the download folder if there are files in it
-        self._storage_dir.mkdir(exist_ok=True, parents=True)
-        for _f in self._storage_dir.glob("*"):
+        self._download_dir.mkdir(exist_ok=True, parents=True)
+        for _f in self._download_dir.glob("*"):
             if not verify_file(_f, _f.name, None):
                 _f.unlink(missing_ok=True)
 
     def _download_file(self, entry: RegularInf):
-        _download_dst = self._storage_dir / entry.sha256hash
+        _download_dst = self._download_dir / entry.sha256hash
         if (_download_dst).is_file():
             return
 
@@ -134,24 +135,20 @@ class OTAFilesDownloader:
         logger.info(
             f"start to download files: {download_meta.total_files_num=}, {download_meta.total_files_size=}"
         )
-        # limit concurrent downloading tasks
-        _tasks_tracker = SimpleTasksTracker(
-            max_concurrent=cfg.MAX_CONCURRENT_TASKS,
-            title="process_regulars",
-        )
-
         try:
             with ThreadPoolExecutor(thread_name_prefix="ota_files_downloading") as pool:
-                for _entry in download_meta.files_list:
-                    _tasks_tracker.add_task(
-                        _fut := pool.submit(self._download_file, _entry)
-                    )
-                    _fut.add_done_callback(_tasks_tracker.done_callback)
-
-                logger.info(
-                    "all downloading tasks are dispatched, wait for finishing..."
+                # limit concurrent downloading tasks
+                _tasks_executor = RetryTaskMap(
+                    self._download_file,
+                    max_concurrent=cfg.MAX_CONCURRENT_TASKS,
+                    executor=pool,
+                    title="downloading_files",
                 )
-                _tasks_tracker.task_collect_finished()
-                _tasks_tracker.wait(self._stats_collector.wait_staging)
+                _tasks_executor.map(download_meta.files_list)
+                # wait for all stats being processed
+                self._stats_collector.wait_staging()
         except Exception as e:
             raise NetworkError from e
+
+    def cleanup_download_dir(self):
+        shutil.rmtree(self._download_dir, ignore_errors=True)
