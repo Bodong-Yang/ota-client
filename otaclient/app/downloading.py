@@ -8,11 +8,12 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
-from typing import List
+from typing import List, Generator, Any
 
 from .common import (
     OTAFileCacheControl,
     RetryTaskMap,
+    InterruptTaskWaiting,
     urljoin_ensure_base,
     verify_file,
 )
@@ -127,7 +128,9 @@ class OTAFilesDownloader:
         except DownloadError as e:
             raise OTAMetaDownloadFailed from e
 
-    def download_ota_files(self, download_meta: DownloadMeta):
+    def download_ota_files(
+        self, download_meta: DownloadMeta
+    ) -> Generator[Any, None, None]:
         """Download OTA files as download_meta indicated.
 
         This method will keep retrying until all the files are downloaded.
@@ -144,7 +147,12 @@ class OTAFilesDownloader:
                     executor=pool,
                     title="downloading_files",
                 )
-                _tasks_executor.map(download_meta.files_list)
+                for _res in _tasks_executor.map(download_meta.files_list):
+                    try:
+                        yield _res
+                    except InterruptTaskWaiting:
+                        _tasks_executor.shutdown()
+
                 # wait for all stats being processed
                 self._stats_collector.wait_staging()
         except Exception as e:

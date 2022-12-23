@@ -22,7 +22,7 @@ import threading
 import enum
 import subprocess
 import time
-from concurrent.futures import CancelledError, Future, Executor
+from concurrent.futures import CancelledError, Future, Executor, as_completed
 from functools import partial
 from hashlib import sha256
 from pathlib import Path
@@ -34,6 +34,7 @@ from typing import (
     Tuple,
     Union,
     Iterable,
+    Generator,
     Any,
     TypeVar,
     Generic,
@@ -418,6 +419,10 @@ class SimpleTasksTracker:
 _T = TypeVar("_T")
 
 
+class InterruptTaskWaiting(Exception):
+    pass
+
+
 class RetryTaskMap(Generic[_T]):
     """A map like class that try its best to finish all the tasks.
 
@@ -428,8 +433,6 @@ class RetryTaskMap(Generic[_T]):
     Reapting the process untill all the element in the input <_iter> is
     successfully processed, or max retry is exceeded.
     """
-
-    POLL_INTERVAL = 2
 
     def __init__(
         self,
@@ -472,6 +475,7 @@ class RetryTaskMap(Generic[_T]):
         self._futs.add(_fut)
 
     def _done_callback(self, fut: Future, /):
+        """Remove the fut from the futs list and release se."""
         try:
             self._done_tasks_num = next(self._done_counter)
             _exp, _entry, _ = fut.result()
@@ -498,12 +502,15 @@ class RetryTaskMap(Generic[_T]):
         self._shutdowned.set()
         self._terminate_pendings()
 
-    def map(self, _iter: Iterable[_T], /):
+    def map(self, _iter: Iterable[_T], /) -> Generator[Any, None, None]:
         """Apply <_func> to each element in <_iter> and try its best to finish
             all the tasks.
 
+        Return:
+            A generator that the caller can control the processing.
+
         Raises:
-            Exception: last recorded exception
+            Exception: last recorded exception.
         """
         for _idx in range(self._max_retry):
             for _entry in _iter:
@@ -515,15 +522,18 @@ class RetryTaskMap(Generic[_T]):
                 f"{self.title} all tasks are dispatched, {self._tasks_num=}, wait for finished"
             )
             # wait for all tasks to be finished
-            while (
-                not self._shutdowned.is_set()
-            ) and self._done_tasks_num < self._tasks_num:
+
+            for _fut in as_completed(self._futs):
                 if self._max_failed and len(self._failed) > self._max_failed:
                     _msg = f"{self.title} exceed max allowed failed({self._max_failed=}), last error: {self.last_error!r}"
                     logger.error(_msg)
                     self.shutdown()
                     raise ValueError(_msg) from self.last_error
-                time.sleep(self.POLL_INTERVAL)
+                if self._shutdowned.is_set():
+                    logger.debug(f"{self.title} is shutdowned.")
+                    return
+                _, _, _return_value = _fut.result()
+                yield _return_value
 
             # everything is OK, exit
             if len(self._failed) == 0:
