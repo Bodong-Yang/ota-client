@@ -571,7 +571,7 @@ class OTACacheScrubHelper:
         self._db = OTACacheDB(db_file)
         self._db_file = Path(db_file)
         self._base_dir = Path(base_dir)
-        self._excutor = ThreadPoolExecutor()
+        self._excutor = ThreadPoolExecutor(thread_name_prefix="otacache_scrub")
 
     @staticmethod
     def _check_entry(base_dir: Path, meta: CacheMeta) -> Tuple[CacheMeta, bool]:
@@ -596,7 +596,6 @@ class OTACacheScrubHelper:
         """
         logger.info("start to scrub the cache entries...")
         try:
-            dangling_db_entry = []
             # NOTE: pre-add db related files into the set
             # to prevent db related files being deleted
             # NOTE 2: cache_db related files: <cache_db>, <cache_db>-shm, <cache_db>-wal, <cache>-journal
@@ -607,21 +606,17 @@ class OTACacheScrubHelper:
                 f"{db_file}-wal",
                 f"{db_file}-journal",
             }
-            res_list = self._excutor.map(
+
+            for meta, valid in self._excutor.map(
                 partial(self._check_entry, self._base_dir),
                 self._db.lookup_all(),
                 chunksize=128,
-            )
-
-            for meta, valid in res_list:
+            ):
                 if not valid:
                     logger.debug(f"invalid db entry found: {meta.url}")
-                    dangling_db_entry.append(meta.url)
+                    self._db.remove_entries(CacheMeta.url, meta.url)
                 else:
                     valid_cache_entry.add(meta.sha256hash)
-
-            # delete the invalid entry from the database
-            self._db.remove_entries(CacheMeta.url, *dangling_db_entry)
 
             # loop over all files under cache folder,
             # if entry's hash is not presented in the valid_cache_entry set,
@@ -629,8 +624,7 @@ class OTACacheScrubHelper:
             for entry in self._base_dir.glob("*"):
                 if entry.name not in valid_cache_entry:
                     logger.debug(f"dangling cache entry found: {entry.name}")
-                    f = self._base_dir / entry.name
-                    f.unlink(missing_ok=True)
+                    (self._base_dir / entry.name).unlink(missing_ok=True)
 
             logger.info("cache scrub finished")
         except Exception as e:
