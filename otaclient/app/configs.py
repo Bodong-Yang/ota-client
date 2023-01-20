@@ -45,6 +45,7 @@ class OtaClientServerConfig:
     # proxy server
     OTA_PROXY_LISTEN_ADDRESS: str = "0.0.0.0"
     OTA_PROXY_LISTEN_PORT: int = 8082
+    OTA_PROXY_LOCK_FPATH = "/var/run/otaproxy.lock"
 
 
 @dataclass

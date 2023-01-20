@@ -138,6 +138,7 @@ class _OTAUpdater:
 
         # init downloader
         self._downloader = Downloader()
+        self._proxies = None
         # init ota update statics collector
         self.update_stats_collector = OTAUpdateStatsCollector()
 

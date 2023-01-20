@@ -27,6 +27,7 @@ from typing import Coroutine, Dict, List, Optional
 from . import log_setting
 from .boot_control import BootloaderType, get_boot_controller, detect_bootloader
 from .configs import server_cfg, config as cfg
+from .common import write_str_to_file_sync
 from .create_standby import get_standby_slot_creator
 from .ecu_info import ECUInfo
 from .ota_client import OTAClient, OTAUpdateFSM
@@ -105,26 +106,32 @@ class OtaProxyWrapper:
         wait_on_timeout: Optional[float] = None,
     ) -> Optional[int]:
         """Launch ota_proxy as a separate process."""
-        if self._lock.acquire(blocking=False) and self._closed:
-            self._closed = False
-            # re-create new Event object and Process object
-            self._scrub_cache_event = self._mp_ctx.Event()
-            self._server_p = self._mp_ctx.Process(
-                target=self.launch_entry,
-                args=[init_cache],
-                kwargs={"scrub_cache_event": self._scrub_cache_event},
-            )
-            self._server_p.start()
+        with self._lock:
+            if self._closed:
+                self._closed = False
+                # re-create new Event object and Process object
+                self._scrub_cache_event = self._mp_ctx.Event()
+                self._server_p = self._mp_ctx.Process(
+                    target=self.launch_entry,
+                    args=[init_cache],
+                    kwargs={"scrub_cache_event": self._scrub_cache_event},
+                    daemon=True,  # kill otaproxy if otaclient exits
+                )
+                self._server_p.start()
 
-            logger.info(
-                f"ota proxy server started(pid={self._server_p.pid})" f"{proxy_cfg=}"
-            )
+                write_str_to_file_sync(
+                    server_cfg.OTA_PROXY_LOCK_FPATH, f"{self._server_p.pid}"
+                )
+                logger.info(
+                    f"ota proxy server started(pid={self._server_p.pid})"
+                    f"{proxy_cfg=}"
+                )
 
-            if wait_on_scrub:
-                self._scrub_cache_event.wait(timeout=wait_on_timeout)
-            return self._server_p.pid
-        else:
-            logger.warning("ignore multi start request")
+                if wait_on_scrub:
+                    self._scrub_cache_event.wait(timeout=wait_on_timeout)
+                return self._server_p.pid
+            else:
+                logger.warning("ignore multi start request")
 
     def stop(self, cleanup_cache=False):
         """Shutdown ota_proxy.
@@ -134,20 +141,22 @@ class OtaProxyWrapper:
         from otaclient.ota_proxy.config import config as proxy_srv_cfg
         import shutil
 
-        if self._lock.acquire(blocking=False) and self._server_p and not self._closed:
-            self._closed = True
-            self._server_p.terminate()
-            self._server_p.join(timeout=32)  # wait for ota_proxy cleanup
+        with self._lock:
+            if self._server_p and not self._closed:
+                self._closed = True
+                self._server_p.terminate()
+                self._server_p.join(timeout=32)  # wait for ota_proxy cleanup
+                self._server_p.close()  # cleanup all resouces related to Process
 
-            if cleanup_cache:
-                shutil.rmtree(proxy_srv_cfg.BASE_DIR, ignore_errors=True)
+                if cleanup_cache:
+                    shutil.rmtree(proxy_srv_cfg.BASE_DIR, ignore_errors=True)
 
-            # prevent the following objects from being re-used again
-            self._server_p = None  # type: ignore
-            self._scrub_cache_event = None  # type: ignore
-            logger.info("ota proxy server closed")
-        else:
-            logger.warning("ignore multi stop request")
+                # prevent the following objects from being re-used again
+                self._server_p = None  # type: ignore
+                self._scrub_cache_event = None  # type: ignore
+                logger.info("ota proxy server closed")
+            else:
+                logger.warning("ignore multi stop request")
 
 
 class _UpdateSession:
@@ -399,6 +408,7 @@ class OtaClientStub:
             _ota_proxy = OtaProxyWrapper()
         # update session tracker
         self._update_session = _UpdateSession(
+            ota_proxy=_ota_proxy,
             executor=self._executor,
         )
 
@@ -417,7 +427,6 @@ class OtaClientStub:
                     result=wrapper.FailureType.RECOVERABLE.value,
                 )
             )
-
             logger.debug("ignore duplicated update request")
             return response
         else:
@@ -426,6 +435,7 @@ class OtaClientStub:
                 self._ota_client.live_ota_status.get_ota_status()
                 == wrapper.StatusOta.SUCCESS
             )
+            logger.info("start update session...")
             await self._update_session.start(request, init_cache=_init_cache)
 
         # a list of directly connected ecus in the update request
