@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from otaclient import __file__ as _otaclient__init__
+from otaclient.configs.ecu_info import ecu_info
+from otaclient.configs.proxy_info import proxy_info
 
 _OTACLIENT_PACKAGE_ROOT = Path(_otaclient__init__).parent
 
