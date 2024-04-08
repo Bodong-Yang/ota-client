@@ -22,6 +22,8 @@ from otaclient import __file__ as _otaclient__init__
 from otaclient.configs.ecu_info import ecu_info
 from otaclient.configs.proxy_info import proxy_info
 
+ecu_info, proxy_info = ecu_info, proxy_info  # to prevent static check warnings
+
 _OTACLIENT_PACKAGE_ROOT = Path(_otaclient__init__).parent
 
 # NOTE: VERSION file is installed under otaclient package root
