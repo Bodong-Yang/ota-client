@@ -33,11 +33,11 @@ dependencies = [
   "pydantic-settings<3,>=2.3",
   "pyopenssl<25,>=24.1",
   "pyyaml<7,>=6.0.1",
-  "requests<2.33,>=2.32",
-  "simple-sqlite3-orm<0.3,>=0.2",
+  "requests<2.50,>=2.32",
+  "simple-sqlite3-orm<0.2.9,>=0.2",
   "typing-extensions>=4.6.3",
   "urllib3<2.3,>=2.2.2",
-  "uvicorn[standard]<0.31,>=0.30",
+  "uvicorn[standard]<0.33,>=0.30",
   "zstandard<0.24,>=0.22",
 ]
 optional-dependencies.dev = [
