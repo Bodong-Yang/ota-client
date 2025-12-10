@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.8"
 resolution-markers = [
     "python_full_version >= '3.10'",
@@ -1804,7 +1804,7 @@ dependencies = [
     { name = "typing-extensions", version = "4.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "typing-extensions", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "urllib3", version = "2.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "urllib3", version = "2.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "uvicorn", version = "0.33.0", source = { registry = "https://pypi.org/simple" }, extra = ["standard"], marker = "python_full_version < '3.9'" },
     { name = "uvicorn", version = "0.34.3", source = { registry = "https://pypi.org/simple" }, extra = ["standard"], marker = "python_full_version >= '3.9'" },
     { name = "zstandard" },
@@ -1844,7 +1844,8 @@ requires-dist = [
     { name = "requests", specifier = "~=2.32" },
     { name = "simple-sqlite3-orm", specifier = "~=0.12" },
     { name = "typing-extensions", specifier = ">=4.6.3" },
-    { name = "urllib3", specifier = ">=2.2.2,<2.7" },
+    { name = "urllib3", marker = "python_full_version < '3.9'", specifier = ">=2.2.2,<2.7" },
+    { name = "urllib3", marker = "python_full_version >= '3.9'", specifier = ">=2.6.1,<2.7" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<0.38" },
     { name = "zstandard", specifier = ">=0.22,<0.24" },
 ]
@@ -2774,7 +2775,7 @@ dependencies = [
     { name = "certifi", marker = "python_full_version >= '3.9'" },
     { name = "charset-normalizer", marker = "python_full_version >= '3.9'" },
     { name = "idna", marker = "python_full_version >= '3.9'" },
-    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "urllib3", version = "2.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3f5c837e9c3dfcfe2018ea6ecef224c710c85ef728f4/requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf", size = 134517, upload-time = "2025-08-18T20:46:02.573Z" }
 wheels = [
@@ -2822,7 +2823,7 @@ wheels = [
 
 [[package]]
 name = "simple-sqlite3-orm"
-version = "0.12.1"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic", version = "2.10.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
@@ -2830,9 +2831,9 @@ dependencies = [
     { name = "typing-extensions", version = "4.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "typing-extensions", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/03/24c4022c56e0348fc1e77aeb59f56d9af204ce26ecd5caec6991781d3039/simple_sqlite3_orm-0.12.1.tar.gz", hash = "sha256:44ba712a88e814c8530f4282ca37966fa3e1beda96289e8f05f67a7d1d50d805", size = 94686, upload-time = "2025-08-13T11:43:10.883Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/2e/f515bb48e8dd142e411bbb8196c0addf7fd9c68b8819273bf77d85c1d47f/simple_sqlite3_orm-0.13.0.tar.gz", hash = "sha256:24f5fad5b3a768238f56f87ac41c069e85fcbd631ce21eaff97b8e34e0132e9c", size = 97081, upload-time = "2025-10-19T08:24:21.528Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/52/0361f60429dfaec545d497a8bc8abf3e9f7b10a30ae551b6a64a872c93c2/simple_sqlite3_orm-0.12.1-py3-none-any.whl", hash = "sha256:12e276dfd5fd21b1d3e4f6141fef7486bda85bbd9befccec0696d5cd636f009a", size = 38579, upload-time = "2025-08-13T11:43:09.737Z" },
+    { url = "https://files.pythonhosted.org/packages/60/d1/329fa8f6e699182b1093b450a8f4871f567dcae69a15b24ff740daa6f8d0/simple_sqlite3_orm-0.13.0-py3-none-any.whl", hash = "sha256:b64b8c894ae43d5818f70ce173bb945c375e0214c53bdb9bc555c4ae68e1af0f", size = 38664, upload-time = "2025-10-19T08:24:20.126Z" },
 ]
 
 [[package]]
@@ -2934,15 +2935,15 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.5.0"
+version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.10'",
     "python_full_version == '3.9.*'",
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/1d/0f3a93cca1ac5e8287842ed4eebbd0f7a991315089b1a0b01c7788aa7b63/urllib3-2.6.1.tar.gz", hash = "sha256:5379eb6e1aba4088bae84f8242960017ec8d8e3decf30480b3a1abdaa9671a3f", size = 432678, upload-time = "2025-12-08T15:25:26.773Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/56/190ceb8cb10511b730b564fb1e0293fa468363dbad26145c34928a60cb0c/urllib3-2.6.1-py3-none-any.whl", hash = "sha256:e67d06fe947c36a7ca39f4994b08d73922d40e6cca949907be05efa6fd75110b", size = 131138, upload-time = "2025-12-08T15:25:25.51Z" },
 ]
 
 [[package]]
