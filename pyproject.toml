@@ -43,7 +43,8 @@ dependencies = [
   "requests~=2.32",
   "simple-sqlite3-orm~=0.12",
   "typing-extensions>=4.6.3",
-  "urllib3>=2.2.2,<2.7",
+  "urllib3>=2.2.2,<2.7;python_full_version<'3.9'",
+  "urllib3>=2.6.1,<2.7;python_full_version>='3.9'",
   "uvicorn[standard]>=0.30,<0.38",
   "zstandard<0.24,>=0.22",
 ]
@@ -75,8 +76,8 @@ version-file = "src/_otaclient_version.py"
 [tool.hatch.version.raw-options]
 fallback_version = "0.0.1"
 
-[tool.hatch.metadata.hooks.custom]
-path = "scripts/hatch_build_lock_deps.py"
+# [tool.hatch.metadata.hooks.custom]
+# path = "scripts/hatch_build_lock_deps.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
