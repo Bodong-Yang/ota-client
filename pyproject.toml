@@ -72,6 +72,9 @@ allow-direct-references = true
 [tool.hatch.build.hooks.vcs]
 version-file = "src/_otaclient_version.py"
 
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.1"
+
 # [tool.hatch.metadata.hooks.custom]
 # path = "scripts/hatch_build_lock_deps.py"
 
