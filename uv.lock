@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.8"
 resolution-markers = [
     "python_full_version >= '3.10'",
@@ -1832,7 +1832,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10.11,<3.14" },
     { name = "anyio", specifier = ">=4.5.1,<5" },
     { name = "cryptography", specifier = "==46.0.3" },
-    { name = "grpcio", specifier = "==1.70.0" },
+    { name = "grpcio", specifier = ">=1.70,<1.71" },
     { name = "msgpack", specifier = ">=1,<1.2" },
     { name = "multidict", specifier = ">=4.5,<7.0" },
     { name = "ota-image-libs", url = "https://github.com/tier4/ota-image-libs/releases/download/v0.2.6/ota_image_libs-0.2.6-py3-none-any.whl" },
