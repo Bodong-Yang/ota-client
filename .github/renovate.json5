@@ -3,6 +3,9 @@
   "extends": [
     "config:best-practices"
   ],
+  "timezone": "Asia/Tokyo",
+  // allow to run on 0~9a.m every day
+  "schedule": ["* 0-9 * * *"],
   "lockFileMaintenance": {
     "enabled": true
   },
