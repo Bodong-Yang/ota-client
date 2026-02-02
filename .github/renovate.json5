@@ -35,6 +35,9 @@
     "labels": [
       "security",
       "dependencies"
+    ],
+    "gitIgnoredAuthors": [
+      "github-actions[bot]+sync-lockfile@users.noreply.github.com"
     ]
   },
   "prHourlyLimit": 16
