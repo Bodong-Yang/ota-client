@@ -20,13 +20,13 @@ jobs:
     steps:
       - name: checkout (release)
         if: ${{ github.event_name == 'release' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         # NOTE: when doing release, the tag will be created
         #       at checkout, no need to fetch old tags
 
       - name: checkout (non-release)
         if: ${{ github.event_name != 'release' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # NOTE: this should be enough to let hatch-vcs determines the
           #       version from git tags.
@@ -34,7 +34,7 @@ jobs:
           fetch-tags: true
 
       - name: setup python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           # use the minimum py ver we support to generate the wheel
           python-version-file: ".python-version"
@@ -42,7 +42,7 @@ jobs:
       - name: install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.10.11"
+          version: "0.12.9"
 
       - name: build otaclient package
         env:
@@ -61,7 +61,7 @@ jobs:
           echo OTACLIENT_VERSION=${OTACLIENT_VERSION} >> $GITHUB_OUTPUT
 
       - name: upload artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-python-packages
           path: dist/*.whl
@@ -84,13 +84,13 @@ jobs:
     steps:
       - name: checkout (release)
         if: ${{ github.event_name == 'release' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         # NOTE: when doing release, the tag will be created
         #       at checkout, no need to fetch old tags
 
       - name: checkout (non-release)
         if: ${{ github.event_name != 'release' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # NOTE: this should be enough to let hatch-vcs determines the
           #       version from git tags.
@@ -115,7 +115,7 @@ jobs:
           output_dir: dist
 
       - name: upload artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-squashfs_${{ matrix.platform }}
           path: |
@@ -129,7 +129,7 @@ jobs:
       contents: write
     steps:
       - name: checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: download python packages artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -162,7 +162,7 @@ jobs:
           directory: "dist"
 
       - name: upload artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-manifest
           path: |
@@ -170,7 +170,7 @@ jobs:
 
       - name: publish release artifacts
         if: ${{ github.event_name == 'release' }}
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/*.whl
