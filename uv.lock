@@ -2558,7 +2558,7 @@ dev = [
     { name = "coverage", specifier = ">=7,<8" },
     { name = "pre-commit", specifier = ">=3,<5" },
     { name = "pytest", specifier = ">=8.3,<10" },
-    { name = "pytest-asyncio", specifier = ">=0.23.8,<1.4" },
+    { name = "pytest-asyncio", specifier = ">=0.23.8,<1.5" },
     { name = "pytest-mock", specifier = "~=3.14" },
     { name = "requests-mock", specifier = "~=1.12" },
     { name = "ruff", specifier = ">=0.14,<1" },
